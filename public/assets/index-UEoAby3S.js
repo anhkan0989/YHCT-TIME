@@ -99791,19 +99791,29 @@ Bạn có chắc chắn muốn bỏ qua cảnh báo này và tiếp tục Import
                                       children:
                                         "Nhập file Excel hoặc dán: Tên bệnh nhân, Mã DVKT.",
                                     }),
-                                    ce.jsxs("label", {
-                                      className:
-                                        "flex items-center gap-2 bg-emerald-800 hover:bg-emerald-700 text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition-colors mb-3 w-max",
+                                    ce.jsxs("div", {
+                                      className: "flex items-center gap-3 mb-3",
                                       children: [
-                                        ce.jsx(T2, { className: "w-4 h-4" }),
-                                        " Tải lên File Excel (.xlsx)",
-                                        ce.jsx("input", {
-                                          type: "file",
-                                          accept: ".xlsx, .xls, .csv",
-                                          onChange: (ee) => W(ee, !1),
-                                          className: "hidden",
+                                        ce.jsxs("label", {
+                                          className:
+                                            "flex items-center gap-2 bg-emerald-800 hover:bg-emerald-700 text-xs font-semibold px-3 py-2 rounded-lg cursor-pointer transition-colors w-max",
+                                          children: [
+                                            ce.jsx(T2, { className: "w-4 h-4" }),
+                                            " Tải lên File Excel (.xlsx)",
+                                            ce.jsx("input", {
+                                              type: "file",
+                                              accept: ".xlsx, .xls, .csv",
+                                              onChange: (ee) => W(ee, !1),
+                                              className: "hidden",
+                                            }),
+                                          ],
                                         }),
-                                      ],
+                                        ce.jsx("button", {
+                                          onClick: () => m(""),
+                                          className: "text-xs text-red-300 hover:text-red-100 hover:bg-red-900/50 font-bold px-3 py-2 rounded-lg transition-colors border border-red-500/30",
+                                          children: "Xóa Import",
+                                        })
+                                      ]
                                     }),
                                     ce.jsx("textarea", {
                                       value: c,
