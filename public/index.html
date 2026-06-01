@@ -12,6 +12,22 @@
     <script type="module" crossorigin src="/assets/index-UEoAby3S.js"></script>
     <script defer src="/assets/module-staff-leave.js?v=1.6"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-CgyAsR17.css">
+    <style>
+      /* Fix cho các màn hình/popup bị dài quá lấp mất nút Lưu */
+      div[role="dialog"] {
+        max-height: 90vh !important;
+        overflow-y: auto !important;
+      }
+      div[role="dialog"] > div {
+        transform: scale(0.95);
+        transform-origin: top center;
+      }
+      form {
+        max-height: 75vh;
+        overflow-y: auto;
+        padding-right: 10px;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
