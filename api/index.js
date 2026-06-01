@@ -688,7 +688,7 @@ app.post("/api/schedule", async (req, res) => {
 });
 
 app.use(express.static(path.join(process.cwd(), "public")));
-app.get("*", (req, res) => {
+app.use((req, res) => {
     res.sendFile(path.join(process.cwd(), "public", "index.html"));
 });
 
