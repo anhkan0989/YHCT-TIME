@@ -16,6 +16,49 @@ app.use(cors());
 app.use(express.json());
 app.use(cookieParser());
 
+// --- ADMIN API ---
+app.post("/api/admin/login", (req, res) => {
+    const { username, password } = req.body;
+    if (username === "anhkan" && password === "020609") {
+        res.cookie("admin_auth", "true", { path: "/" });
+        res.json({ success: true });
+    } else {
+        res.status(401).json({ error: "Sai tài khoản hoặc mật khẩu" });
+    }
+});
+
+app.get("/api/admin/clinics", async (req, res) => {
+    if (req.cookies.admin_auth !== "true") return res.status(403).json({ error: "Forbidden" });
+    
+    const { data: settings } = await supabase.from("settings").select("tenant_id");
+    const { data: staff } = await supabase.from("staff").select("tenant_id");
+    const { data: apps } = await supabase.from("appointments").select("tenant_id");
+    
+    let allTenants = new Set();
+    (settings || []).forEach(d => d.tenant_id && allTenants.add(d.tenant_id));
+    (staff || []).forEach(d => d.tenant_id && allTenants.add(d.tenant_id));
+    (apps || []).forEach(d => d.tenant_id && allTenants.add(d.tenant_id));
+    
+    res.json(Array.from(allTenants));
+});
+
+app.delete("/api/admin/clinics/:id", async (req, res) => {
+    if (req.cookies.admin_auth !== "true") return res.status(403).json({ error: "Forbidden" });
+    const tenantId = req.params.id;
+    if (!tenantId) return res.status(400).json({ error: "Missing tenant ID" });
+
+    await supabase.from("appointments").delete().eq("tenant_id", tenantId);
+    await supabase.from("staff_leaves").delete().eq("tenant_id", tenantId);
+    await supabase.from("machines").delete().eq("tenant_id", tenantId);
+    await supabase.from("services").delete().eq("tenant_id", tenantId);
+    await supabase.from("staff").delete().eq("tenant_id", tenantId);
+    await supabase.from("settings").delete().eq("tenant_id", tenantId);
+    
+    res.json({ message: "Đã xóa toàn bộ dữ liệu của đơn vị: " + tenantId });
+});
+// --- END ADMIN API ---
+
+
 app.get("/api/settings", async (req, res) => {
     const tenantId = req.cookies.tenant_id;
     let query = supabase.from("settings").select("*");
@@ -416,6 +459,9 @@ app.post("/api/schedule", async (req, res) => {
         if (sortedPatients.length > MAX_PATIENTS) {
             return res.status(400).json({ error: `Quá nhiều bệnh nhân (${sortedPatients.length}). Tối đa ${MAX_PATIENTS} mỗi lần.` });
         }
+        
+        console.log(`[SCHEDULE] Bắt đầu xếp lịch cho ${sortedPatients.length} dịch vụ...`);
+        
         sortedPatients.forEach((p) => {
             const service = services.find(s => s.id === p.service_id);
             if (!service) {
@@ -438,13 +484,13 @@ app.post("/api/schedule", async (req, res) => {
             const patientIndex = seenKeys.indexOf(pKey);
             // Độ trễ để dành chỗ cho Tạo phiếu (1p) và Y lệnh (1p) duy nhất cho mỗi BN.
             // BN thứ i cần (i*2 + 2) phút trống sau giờ mở cửa.
-            const staggerMins = (patientIndex * 2);
+            const staggerMins = (patientIndex * 2) + 2;
             let patientLastEndTime = midnightTime + (mStartMins + staggerMins) * 60 * 1000;
             if (sessionAppsForPatient.length > 0) {
                 const lastApp = sessionAppsForPatient[sessionAppsForPatient.length - 1];
                 const lastSvc = services.find(s => s.id === lastApp.service_id);
                 if (lastSvc) {
-                    const lastStart = new Date(lastApp.start_time).getTime();
+                    const lastStart = lastApp.start_time_ms;
                     const hasIdleTime = !lastSvc.is_exclusive_staff && lastSvc.non_overlap_time < lastSvc.total_time;
                     if (hasIdleTime) {
                         patientLastEndTime = lastStart + lastSvc.non_overlap_time * 60 * 1000 + MIN_GAP;
@@ -454,15 +500,25 @@ app.post("/api/schedule", async (req, res) => {
                     }
                 }
             }
-            for (let pass = 1; pass <= 2; pass++) {
+            
+            const machinesForSvc = service.requires_machine ? allMachines.filter(m => m.service_id === service.id) : [];
+
+            for (let pass = 1; pass <= 3; pass++) {
                 loopCount = 0;
                 let attemptTime = patientLastEndTime;
-                let currentEnableLunchOt = (pass === 1) ? false : enableLunchOt;
-                let currentEnableEveningOt = (pass === 1) ? false : enableEveningOt;
+                let currentEnableLunchOt = (pass >= 2) ? enableLunchOt : false;
+                let currentEnableEveningOt = (pass === 3) ? enableEveningOt : false;
                 while (!foundSlot && attemptTime < midnightTime + 24 * 60 * 60 * 1000 && loopCount < MAX_LOOP) {
                     loopCount++;
-                    const vnDate = new Date(attemptTime + 7 * 60 * 60 * 1000);
-                    const attemptMins = vnDate.getUTCHours() * 60 + vnDate.getUTCMinutes();
+                    const attemptMins = Math.floor((attemptTime - midnightTime) / 60000);
+
+                    if (!currentEnableEveningOt && attemptMins >= aEndMins) {
+                        break;
+                    }
+                    if (currentEnableEveningOt && attemptMins >= eOtEndMins) {
+                        break;
+                    }
+
                     // Ép thời gian bắt đầu tối thiểu theo Stagger khi chuyển ca (Session)
                     if (attemptMins < mStartMins + staggerMins) {
                         attemptTime = midnightTime + (mStartMins + staggerMins) * 60 * 1000;
@@ -508,8 +564,7 @@ app.post("/api/schedule", async (req, res) => {
                                     const leaveEndParts = leave.end_time.split(':');
                                     const leaveEndMins = parseInt(leaveEndParts[0]) * 60 + parseInt(leaveEndParts[1]);
                                     // Tính thời gian thao tác DVKT
-                                    const vnDate2 = new Date(attemptTime + 7 * 60 * 60 * 1000);
-                                    const dvktStartMins = vnDate2.getUTCHours() * 60 + vnDate2.getUTCMinutes();
+                                    const dvktStartMins = Math.floor((attemptTime - midnightTime) / 60000);
                                     const dvktEndMins = dvktStartMins + service.non_overlap_time;
                                     // Check overlap: nếu thời gian DVKT chồng lên thời gian nghỉ → loại
                                     if (dvktStartMins < leaveEndMins && dvktEndMins > leaveStartMins) {
@@ -530,205 +585,185 @@ app.post("/api/schedule", async (req, res) => {
                         return true;
                     });
                     if (eligibleStaff.length === 0) {
-                        if (pass === 2) {
+                        if (pass === 3) {
                             unassignedPatients.push({ ...p, service: service.name, reason: `Không có Nhân viên nào nhận DVKT này` });
                         }
                         break; // break the while loop, don't schedule
                     }
-                    eligibleStaff.sort((a,b) => staffTimeline[a.id].length - staffTimeline[b.id].length);
+                    const patientStaffIds = sessionAppsForPatient.map(app => app.staff_id);
+                    eligibleStaff.sort((a,b) => {
+                        const aServed = patientStaffIds.includes(a.id) ? -1 : 0;
+                        const bServed = patientStaffIds.includes(b.id) ? -1 : 0;
+                        if (aServed !== bServed) return aServed - bServed;
+                        return staffTimeline[a.id].length - staffTimeline[b.id].length;
+                    });
+                    const actionStart = attemptTime;
+                    const actionEnd = actionStart + service.non_overlap_time * 60 * 1000;
+                    const totalEnd = actionStart + service.total_time * 60 * 1000;
+                    const bedEnd = actionStart + service.bed_occupancy_time * 60 * 1000;
+
+                    const attemptEndMins = Math.floor((totalEnd - midnightTime) / 60000);
+                    const fitsMorning = attemptMins >= mStartMins && attemptEndMins <= mEndMins;
+                    const fitsLunchOt = currentEnableLunchOt && attemptMins >= mStartMins && attemptEndMins <= lOtEndMins;
+                    const fitsAfternoon = attemptMins >= aStartMins && attemptEndMins <= aEndMins;
+                    const fitsEveningOt = currentEnableEveningOt && attemptMins >= aStartMins && attemptEndMins <= eOtEndMins;
+                    const exceedsShift = !fitsMorning && !fitsLunchOt && !fitsAfternoon && !fitsEveningOt;
+
+                    if (exceedsShift) {
+                        // Nhảy cóc đến ca làm việc tiếp theo để tiết kiệm vòng lặp (Fast-forward)
+                        if (attemptMins < mStartMins) attemptTime = midnightTime + mStartMins * 60000;
+                        else if (attemptMins >= mEndMins && currentEnableLunchOt && attemptMins < lOtStartMins) attemptTime = midnightTime + lOtStartMins * 60000;
+                        else if (attemptMins >= (currentEnableLunchOt ? lOtEndMins : mEndMins) && attemptMins < aStartMins) attemptTime = midnightTime + aStartMins * 60000;
+                        else if (attemptMins >= aEndMins && currentEnableEveningOt && attemptMins < eOtStartMins) attemptTime = midnightTime + eOtStartMins * 60000;
+                        else {
+                            // Hết giờ làm việc hôm nay
+                            break;
+                        }
+                        continue;
+                    }
+
+                    const activeBeds = bedTimeline.filter(busy => actionStart < busy.end && bedEnd > busy.start).length;
+                    const isBedBusy = activeBeds >= 10;
+                    if (isBedBusy) {
+                        attemptTime += 60000;
+                        continue;
+                    }
+
+                    // BN check: các DVKT trên cùng 1 BN phải cách nhau ít nhất MIN_GAP
+                    let isPatientBusy = patientTimeline[pKey].some(busy => actionStart < (busy.end + MIN_GAP) && (totalEnd + MIN_GAP) > busy.start);
+                    
+                    const newServiceHasIdleTime = !service.is_exclusive_staff &&
+                        !service.no_patient_overlap &&
+                        service.non_overlap_time < service.total_time;
+                    
+                    if (isPatientBusy && newServiceHasIdleTime) {
+                        const canOverlapAll = patientTimeline[pKey].every(busy => {
+                            const clashing = (actionStart < busy.end && totalEnd > busy.start);
+                            if (!clashing) return true;
+                            
+                            const clashingApp = sessionAppsForPatient.find(a => a.start_time_ms === busy.start);
+                            if (!clashingApp) return false;
+                            const clashingSvc = services.find(sv => sv.id === clashingApp.service_id);
+                            if (!clashingSvc) return false;
+                            
+                            const newAllowList = service.allow_idle_overlap_with ? service.allow_idle_overlap_with.split(',').map(x=>x.trim()) : [];
+                            const newDenyList = service.deny_idle_overlap_with ? service.deny_idle_overlap_with.split(',').map(x=>x.trim()) : [];
+                            const oldAllowList = clashingSvc.allow_idle_overlap_with ? clashingSvc.allow_idle_overlap_with.split(',').map(x=>x.trim()) : [];
+                            const oldDenyList = clashingSvc.deny_idle_overlap_with ? clashingSvc.deny_idle_overlap_with.split(',').map(x=>x.trim()) : [];
+                            
+                            const idNewStr = String(service.id);
+                            const idOldStr = String(clashingSvc.id);
+
+                            if (newDenyList.includes(idOldStr) || oldDenyList.includes(idNewStr)) return false; 
+                            const isExplicitlyAllowed = newAllowList.includes(idOldStr) || oldAllowList.includes(idNewStr);
+
+                            if (!isExplicitlyAllowed) {
+                                if (clashingSvc.no_patient_overlap) return false;
+                                const oldHasIdleTime = !clashingSvc.is_exclusive_staff && clashingSvc.non_overlap_time < clashingSvc.total_time;
+                                if (!oldHasIdleTime) return false;
+                            }
+
+                            if (actionStart === busy.start) return false;
+                            const clashingTotalEnd = busy.start + clashingSvc.total_time * 60 * 1000;
+                            if (totalEnd === clashingTotalEnd) return false;
+                            if (actionStart <= clashingTotalEnd && actionStart >= (clashingTotalEnd - MIN_GAP)) return false;
+                            if (totalEnd <= busy.start + MIN_GAP && totalEnd >= busy.start) return false;
+                            
+                            if (busy.start <= actionStart) {
+                                const oldBusyEnd = busy.start + clashingSvc.non_overlap_time * 60 * 1000;
+                                if (actionStart < oldBusyEnd + MIN_GAP) return false;
+                            } else {
+                                const newBusyEnd = actionStart + service.non_overlap_time * 60 * 1000;
+                                if (busy.start < newBusyEnd + MIN_GAP) return false;
+                            }
+                            return true;
+                        });
+                        if (canOverlapAll) isPatientBusy = false;
+                    }
+                    if (isPatientBusy) {
+                        attemptTime += 60000;
+                        continue;
+                    }
+
+                    // Check specific machine availability
+                    let assignedMachineId = null;
+                    if (service.requires_machine) {
+                        // Sort inside loop because machineAllocations lengths might change if other patients are scheduled
+                        machinesForSvc.sort((a,b) => machineAllocations[a.id].length - machineAllocations[b.id].length);
+                        for (const m of machinesForSvc) {
+                            const isMbusy = machineAllocations[m.id].some(busy => actionStart < busy.end && totalEnd > busy.start);
+                            if (!isMbusy) {
+                                assignedMachineId = m.id;
+                                break;
+                            }
+                        }
+                        if (!assignedMachineId) {
+                            attemptTime += 60000;
+                            continue;
+                        }
+                    }
+
+                    // Check patient end conflicts
+                    let hasPatientEndConflict = false;
+                    for (const existingApp of sessionAppsForPatient) {
+                        const existSvc = services.find(sv => sv.id === existingApp.service_id);
+                        if (!existSvc) continue;
+                        const existStart = existingApp.start_time_ms;
+                        const existTotalEnd = existingApp.total_end_ms;
+                        
+                        if (Math.abs(totalEnd - existTotalEnd) < MIN_GAP) hasPatientEndConflict = true;
+                        if (Math.abs(actionStart - existTotalEnd) < MIN_GAP) hasPatientEndConflict = true;
+                        if (Math.abs(totalEnd - existStart) < MIN_GAP) hasPatientEndConflict = true;
+                    }
+                    if (hasPatientEndConflict) {
+                        attemptTime += 60000;
+                        continue;
+                    }
+
+                    let foundSlot = false;
+                    let finalSlotData = null;
+
+                    const appsByStaff = {};
+                    for (const app of scheduledAppointments) {
+                        if (!appsByStaff[app.staff_id]) appsByStaff[app.staff_id] = [];
+                        appsByStaff[app.staff_id].push(app);
+                    }
+
                     for (const s of eligibleStaff) {
-                        const actionStart = attemptTime;
-                        const actionEnd = actionStart + service.non_overlap_time * 60 * 1000;
-                        const totalEnd = actionStart + service.total_time * 60 * 1000;
-                        const bedEnd = actionStart + service.bed_occupancy_time * 60 * 1000;
-
-                        const attemptEndDate = new Date(totalEnd + 7 * 60 * 60 * 1000);
-                        const attemptEndMins = attemptEndDate.getUTCHours() * 60 + attemptEndDate.getUTCMinutes();
-                        const fitsMorning = attemptMins >= mStartMins && attemptEndMins <= mEndMins;
-                        const fitsLunchOt = currentEnableLunchOt && attemptMins >= mStartMins && attemptEndMins <= lOtEndMins;
-                        const fitsAfternoon = attemptMins >= aStartMins && attemptEndMins <= aEndMins;
-                        const fitsEveningOt = currentEnableEveningOt && attemptMins >= aStartMins && attemptEndMins <= eOtEndMins;
-                        const exceedsShift = !fitsMorning && !fitsLunchOt && !fitsAfternoon && !fitsEveningOt;
-
-                        // Kiểm tra NV có bận không: kết thúc ca trước + MIN_GAP mới được bắt đầu ca mới
-                        // Dùng actionEnd (non_overlap_time) cho non-exclusive, totalEnd cho exclusive
-                        // QUAN TRỌNG: Dùng >= thay vì > để BẮT BUỘC khoảng cách, không cho trùng giờ
-                        const isStaffBusy = exceedsShift || (service.is_exclusive_staff
+                        // Kiểm tra NV có bận không
+                        const isStaffBusy = service.is_exclusive_staff
                             ? staffTimeline[s.id].some(busy => actionStart < (busy.end + MIN_GAP) && (totalEnd + MIN_GAP) > busy.start)
                             : staffTimeline[s.id].some(busy => {
                                 if (busy.type === 'action') {
-                                    // Phải cách nhau ít nhất MIN_GAP (1 phút)
-                                    // actionStart phải >= busy.end + MIN_GAP (không cho bằng nhau)
                                     return actionStart < (busy.end + MIN_GAP) && (actionEnd + MIN_GAP) > busy.start;
                                 }
                                 return false;
-                            }));
-                        const tooClose = false; // Đã tích hợp MIN_GAP vào isStaffBusy
-                        const activeBeds = bedTimeline.filter(busy => actionStart < busy.end && bedEnd > busy.start).length;
-                        const isBedBusy = activeBeds >= 10;
-                        // BN check: các DVKT trên cùng 1 BN phải cách nhau ít nhất MIN_GAP
-                        let isPatientBusy = patientTimeline[pKey].some(busy => actionStart < (busy.end + MIN_GAP) && (totalEnd + MIN_GAP) > busy.start);
-                        // ========== LOGIC LỒNG CHÉO DVKT TỔNG QUÁT ==========
-                        // Quy tắc dựa hoàn toàn trên cấu hình DVKT, không hardcode tên dịch vụ:
-                        //
-                        // 1. DVKT mới có no_patient_overlap = true
-                        //    => KHÔNG cho phép lồng chéo (BN phải chờ xong DVKT cũ)
-                        //
-                        // 2. DVKT mới (service) là "chiếm trọn NV" (is_exclusive_staff)
-                        //    HOẶC non_overlap_time >= total_time (không có thời gian rảnh)
-                        //    => KHÔNG cho phép lồng chéo (BN phải chờ xong DVKT cũ)
-                        //
-                        // 3. DVKT cũ (clashing) là "chiếm trọn NV" 
-                        //    HOẶC non_overlap_time >= total_time
-                        //    HOẶC no_patient_overlap = true
-                        //    => KHÔNG cho phép lồng chéo
-                        //
-                        // 4. Cả hai DVKT đều có thời gian rảnh (idle > 0)
-                        //    => Cho phép lồng chéo NẾU:
-                        //    a) Giờ bắt đầu KHÁC nhau
-                        //    b) Giờ kết thúc KHÁC nhau  
-                        //    c) DVKT mới bắt đầu SAU phần bận của DVKT cũ (non_overlap_time + 1p)
-                        //    d) Nếu cùng NV: DVKT mới bắt đầu sau non_overlap_time của DVKT cũ + 1p
-                        //       (đã được xử lý ở staffTimeline check)
-                        //
-                        const newServiceHasIdleTime = !service.is_exclusive_staff &&
-                            !service.no_patient_overlap &&
-                            service.non_overlap_time < service.total_time;
-                        if (isPatientBusy && newServiceHasIdleTime) {
-                            const canOverlapAll = patientTimeline[pKey].every(busy => {
-                                const clashing = (actionStart < busy.end && totalEnd > busy.start);
-                                if (!clashing)
-                                    return true; // Không chồng chéo -> OK
-                                // Tìm DVKT đang chồng chéo
-                                const clashingApp = scheduledAppointments.find(a => a.patient_name === p.name &&
-                                    new Date(a.start_time).getTime() === busy.start);
-                                if (!clashingApp)
-                                    return false; // Không xác định -> block
-                                const clashingSvc = services.find(sv => sv.id === clashingApp.service_id);
-                                if (!clashingSvc)
-                                    return false;
-                                
-                                // Kiểm tra cùng Nhân viên -> CẮT (KHÔNG LỒNG) nếu cùng 1 nhân viên phục vụ
-                                if (clashingApp.staff_id === s.id) {
-                                    return false; // Tuyệt đối không cho trùng giờ kết quả cùng 1 nhân viên
-                                }
-
-                                // ===== CUSTOM IDLE OVERLAP LOGIC =====
-                                const newAllowList = service.allow_idle_overlap_with ? service.allow_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                                const newDenyList = service.deny_idle_overlap_with ? service.deny_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                                const oldAllowList = clashingSvc.allow_idle_overlap_with ? clashingSvc.allow_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                                const oldDenyList = clashingSvc.deny_idle_overlap_with ? clashingSvc.deny_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                                
-                                const idNewStr = String(service.id);
-                                const idOldStr = String(clashingSvc.id);
-
-                                // 1. Nếu nằm trong DANH SÁCH CẤM của nhau -> BLOCK
-                                if (newDenyList.includes(idOldStr) || oldDenyList.includes(idNewStr)) {
-                                    return false; 
-                                }
-
-                                // 2. Nếu nằm trong DANH SÁCH CHO PHÉP của nhau -> ALLOW
-                                const isExplicitlyAllowed = newAllowList.includes(idOldStr) || oldAllowList.includes(idNewStr);
-
-                                // Nếu KHÔNG ĐƯỢC chỉ định trong bất kỳ list nào, ta dùng logic fallback mặc định
-                                if (!isExplicitlyAllowed) {
-                                    // Kiểm tra DVKT cũ có no_patient_overlap không
-                                    if (clashingSvc.no_patient_overlap)
-                                        return false; // DVKT cũ cấm trùng BN -> KHÔNG cho lồng
-                                    // Kiểm tra DVKT cũ có thời gian rảnh không
-                                    const oldHasIdleTime = !clashingSvc.is_exclusive_staff &&
-                                        clashingSvc.non_overlap_time < clashingSvc.total_time;
-                                    // Nếu DVKT cũ KHÔNG có thời gian rảnh -> KHÔNG cho lồng
-                                    if (!oldHasIdleTime)
-                                        return false;
-                                }
-
-                                // Dù explicitly allowed hoặc default fallback, VẪN phải đảm bảo thời gian logic:
-                                // Giờ bắt đầu/kết thúc PHẢI khác nhau rành mạch, cách ít nhất MIN_GAP
-                                if (actionStart === busy.start)
-                                    return false;
-                                const clashingTotalEnd = busy.start + clashingSvc.total_time * 60 * 1000;
-                                if (totalEnd === clashingTotalEnd)
-                                    return false;
-                                // CẤM: Giờ bắt đầu DVKT mới = giờ kết thúc DVKT cũ (hoặc ngược lại)
-                                if (actionStart <= clashingTotalEnd && actionStart >= (clashingTotalEnd - MIN_GAP))
-                                    return false;
-                                if (totalEnd <= busy.start + MIN_GAP && totalEnd >= busy.start)
-                                    return false;
-                                // Xác định DVKT nào bắt đầu trước để kiểm tra thời gian rảnh
-                                if (busy.start <= actionStart) {
-                                    const oldBusyEnd = busy.start + clashingSvc.non_overlap_time * 60 * 1000;
-                                    if (actionStart < oldBusyEnd + MIN_GAP)
-                                        return false;
-                                }
-                                else {
-                                    const newBusyEnd = actionStart + service.non_overlap_time * 60 * 1000;
-                                    if (busy.start < newBusyEnd + MIN_GAP)
-                                        return false;
-                                }
-                                return true; // Tất cả điều kiện đều thỏa -> cho phép lồng
                             });
-                            if (canOverlapAll)
-                                isPatientBusy = false;
-                        }
-                        // Check specific machine availability
-                        let assignedMachineId = null;
-                        if (service.requires_machine) {
-                            const machinesForSvc = allMachines.filter(m => m.service_id === service.id);
-                            machinesForSvc.sort((a,b) => machineAllocations[a.id].length - machineAllocations[b.id].length);
-                            for (const m of machinesForSvc) {
-                                const isMbusy = machineAllocations[m.id].some(busy => actionStart < busy.end && totalEnd > busy.start);
-                                if (!isMbusy) {
-                                    assignedMachineId = m.id;
-                                    break;
-                                }
-                            }
-                        }
-                        // ========== RÀNG BUỘC CỨNG: GIỜ KẾT THÚC THỰC TẾ KHÔNG ĐƯỢC TRÙNG ==========
-                        // Tính giờ kết thúc thực tế (totalEnd = start + total_time) của TẤT CẢ DVKT đã xếp
-                        // rồi so sánh với totalEnd của DVKT mới
-                        let hasEndConflict = false;
-                        for (const existingApp of scheduledAppointments) {
+                        if (isStaffBusy) continue;
+
+                        // Ràng buộc cứng với nhân viên: giờ kết thúc THAO TÁC không được trùng
+                        let hasStaffEndConflict = false;
+                        
+                        const staffApps = appsByStaff[s.id] || [];
+                        for (const existingApp of staffApps) {
                             const existSvc = services.find(sv => sv.id === existingApp.service_id);
                             if (!existSvc) continue;
-                            const existStart = new Date(existingApp.start_time).getTime();
-                            const existTotalEnd = existStart + existSvc.total_time * 60 * 1000;
-                            const existActionEnd = existStart + existSvc.non_overlap_time * 60 * 1000;
-                            const existKey = existingApp.stt || existingApp.patient_name;
-                            const isSamePatient = (existKey === pKey);
-                            const isSameStaff = (existingApp.staff_id === s.id);
+                            const existStart = existingApp.start_time_ms;
+                            const existTotalEnd = existingApp.total_end_ms;
+                            const existActionEnd = existingApp.action_end_ms;
                             
-                            if (isSamePatient || isSameStaff) {
-                                // 1. Giờ KẾT THÚC THỰC TẾ không được bằng nhau (±MIN_GAP)
-                                if (Math.abs(totalEnd - existTotalEnd) < MIN_GAP) {
-                                    hasEndConflict = true;
-                                    break;
-                                }
-                                // 2. Giờ BẮT ĐẦU mới không được = Giờ KẾT THÚC THỰC TẾ cũ (±MIN_GAP)
-                                if (Math.abs(actionStart - existTotalEnd) < MIN_GAP) {
-                                    hasEndConflict = true;
-                                    break;
-                                }
-                                // 3. Giờ KẾT THÚC THỰC TẾ mới không được = Giờ BẮT ĐẦU cũ (±MIN_GAP)
-                                if (Math.abs(totalEnd - existStart) < MIN_GAP) {
-                                    hasEndConflict = true;
-                                    break;
-                                }
-                            }
-                            // 4. Cùng NV: giờ kết thúc THAO TÁC cũng không được trùng
-                            if (isSameStaff) {
-                                if (Math.abs(actionEnd - existActionEnd) < MIN_GAP) {
-                                    hasEndConflict = true;
-                                    break;
-                                }
-                            }
+                            if (Math.abs(totalEnd - existTotalEnd) < MIN_GAP) hasStaffEndConflict = true;
+                            if (Math.abs(actionStart - existTotalEnd) < MIN_GAP) hasStaffEndConflict = true;
+                            if (Math.abs(totalEnd - existStart) < MIN_GAP) hasStaffEndConflict = true;
+                            if (Math.abs(actionEnd - existActionEnd) < MIN_GAP) hasStaffEndConflict = true;
                         }
-                        if (!isStaffBusy && !tooClose && (!service.requires_machine || assignedMachineId) && !isBedBusy && !isPatientBusy && !hasEndConflict) {
-                            finalSlotData = { s, actionStart, actionEnd, totalEnd, bedEnd, assignedMachineId };
-                            foundSlot = true;
-                            break;
-                        }
+                        if (hasStaffEndConflict) continue;
+
+                        finalSlotData = { s, actionStart, actionEnd, totalEnd, bedEnd, assignedMachineId };
+                        foundSlot = true;
+                        break;
                     }
+
                     if (!foundSlot)
                         attemptTime += 1 * 60 * 1000; // Tăng 1 phút mỗi bước kiểm tra
                 }
@@ -754,10 +789,14 @@ app.post("/api/schedule", async (req, res) => {
                 bedTimeline.push({ start: actionStart, end: bedEnd });
                 scheduledAppointments.push({
                     patient_name: p.name,
+                    stt: p.stt,
                     service_id: service.id,
                     staff_id: s.id,
                     machine_id: finalSlotData.assignedMachineId,
                     start_time: new Date(actionStart).toISOString(),
+                    start_time_ms: actionStart,
+                    action_end_ms: actionEnd,
+                    total_end_ms: totalEnd,
                     status: 'scheduled'
                 });
             }
@@ -781,12 +820,16 @@ app.post("/api/schedule", async (req, res) => {
         await supabase.from("appointments").insert(toInsert);
     }
     
+    console.log(`[SCHEDULE] Xếp lịch xong, thành công: ${scheduledAppointments.length}, Thất bại: ${unassignedPatients.length}`);
     res.json({ scheduled: scheduledAppointments, unassigned: unassignedPatients });
 });
 
 app.use(express.static(path.join(process.cwd(), "public")));
 app.use((req, res) => {
     if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
+    if (req.path === "/admin") {
+        return res.sendFile(path.join(process.cwd(), "public", "admin.html"));
+    }
     if (!req.cookies.tenant_id) {
         res.sendFile(path.join(process.cwd(), "public", "landing.html"));
     } else {
