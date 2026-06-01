@@ -3,3 +3,5 @@ clinic.db
 clinic.db-shm
 clinic.db-wal
 .env
+
+.vercel

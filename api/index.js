@@ -693,5 +693,3 @@ const { patients, startTime } = req.body;
 });
 
 export default app;
-i f   ( p r o c e s s . e n v . N O D E _ E N V   ! = =   ' p r o d u c t i o n ' )   {   c o n s t   p o r t   =   p r o c e s s . e n v . P O R T   | |   3 0 0 0 ;   a p p . l i s t e n ( p o r t ,   ( )   = >   c o n s o l e . l o g ( ' L o c a l   s e r v e r   s t a r t e d   o n   p o r t   '   +   p o r t ) ) ;   }  
- 
