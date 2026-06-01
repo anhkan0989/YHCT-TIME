@@ -535,7 +535,7 @@ app.post("/api/schedule", async (req, res) => {
 
             // Stagger: BN thá»© i báº¯t Ä‘áº§u muá»™n hÆ¡n (i*2+2) phÃºt
             const patientIndex = seenKeys.indexOf(pKey);
-            const staggerMins = (patientIndex * 2) + 2;
+            const staggerMins = patientIndex * 2;
             let patientLastEndTime = midnightTime + (mStartMins + staggerMins) * 60000;
 
             if (sessionAppsForPatient.length > 0) {

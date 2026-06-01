@@ -98930,11 +98930,7 @@ Vui lòng kiểm tra lại cấu hình Dịch vụ (có NV nào nhận thao tác
         const We = new Date(it),
           We_mins = We.getHours() * 60 + We.getMinutes();
         let diff_c = -2, diff_t = -1;
-        if (We_mins === Se) {
-          diff_c = 0; diff_t = 1;
-        } else if (We_mins === Ae) {
-          diff_c = 0; diff_t = 1;
-        } else if (We_mins > _e && We_mins < Ae) {
+        if (We_mins > _e && We_mins < Ae) {
           diff_c = _e - We_mins - 2;
           diff_t = _e - We_mins - 1;
         } else if (We_mins > je) {
