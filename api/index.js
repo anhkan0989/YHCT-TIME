@@ -1,4 +1,4 @@
-import express from "express";
+﻿import express from "express";
 import cors from "cors";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
@@ -23,7 +23,7 @@ app.post("/api/admin/login", (req, res) => {
         res.cookie("admin_auth", "true", { path: "/" });
         res.json({ success: true });
     } else {
-        res.status(401).json({ error: "Sai tài khoản hoặc mật khẩu" });
+        res.status(401).json({ error: "Sai tÃ i khoáº£n hoáº·c máº­t kháº©u" });
     }
 });
 
@@ -54,7 +54,7 @@ app.delete("/api/admin/clinics/:id", async (req, res) => {
     await supabase.from("staff").delete().eq("tenant_id", tenantId);
     await supabase.from("settings").delete().eq("tenant_id", tenantId);
     
-    res.json({ message: "Đã xóa toàn bộ dữ liệu của đơn vị: " + tenantId });
+    res.json({ message: "ÄÃ£ xÃ³a toÃ n bá»™ dá»¯ liá»‡u cá»§a Ä‘Æ¡n vá»‹: " + tenantId });
 });
 // --- END ADMIN API ---
 
@@ -220,7 +220,7 @@ app.post("/api/staff-leaves", async (req, res) => {
         tenant_id: tenantId || null
     }).select().single();
     if (error) return res.status(400).json({ error: error.message });
-    res.json({ id: data.id, message: "Đã tạo nghỉ phép" });
+    res.json({ id: data.id, message: "ÄÃ£ táº¡o nghá»‰ phÃ©p" });
 });
 
 app.put("/api/staff-leaves/:id", async (req, res) => {
@@ -229,13 +229,13 @@ app.put("/api/staff-leaves/:id", async (req, res) => {
     await supabase.from("staff_leaves").update({
         staff_id, leave_date, leave_type, start_time: start_time || null, end_time: end_time || null, reason: reason || null
     }).eq("id", id);
-    res.json({ message: "Đã cập nhật nghỉ phép" });
+    res.json({ message: "ÄÃ£ cáº­p nháº­t nghá»‰ phÃ©p" });
 });
 
 app.delete("/api/staff-leaves/:id", async (req, res) => {
     const { id } = req.params;
     await supabase.from("staff_leaves").delete().eq("id", id);
-    res.json({ message: "Đã xóa nghỉ phép" });
+    res.json({ message: "ÄÃ£ xÃ³a nghá»‰ phÃ©p" });
 });
 
 app.get("/api/machines", async (req, res) => {
@@ -417,295 +417,278 @@ app.post("/api/schedule", async (req, res) => {
         const lOtEndMins = parseTimeStr(settings.lunch_ot_end || '12:30');
         const enableEveningOt = settings.enable_evening_ot === 'true';
         const eOtEndMins = parseTimeStr(settings.evening_ot_end || '19:00');
-        const lOtStartMins = mEndMins;   // Lunch OT bắt đầu ngay khi hết buổi sáng
-        const eOtStartMins = aEndMins;   // Evening OT bắt đầu ngay khi hết buổi chiều
+        const lOtStartMins = mEndMins;
+        const eOtStartMins = aEndMins;
+
         // --- Service priority order for scheduling ---
-        const SERVICE_PRIORITY = ['xoa bóp', 'thủy châm', 'điện châm', 'hào châm', 'điện/hào châm', 'hồng ngoại', 'giác hơi', 'chườm'];
+        const SERVICE_PRIORITY = ['xoa bÃ³p', 'thá»§y chÃ¢m', 'Ä‘iá»‡n chÃ¢m', 'hÃ o chÃ¢m', 'Ä‘iá»‡n/hÃ o chÃ¢m', 'há»“ng ngoáº¡i', 'giÃ¡c hÆ¡i', 'chÆ°á»m'];
         const getSvcPriority = (svcName) => {
             const nameLow = svcName.toLowerCase();
             for (let i = 0; i < SERVICE_PRIORITY.length; i++) {
-                if (nameLow.includes(SERVICE_PRIORITY[i]))
-                    return i;
+                if (nameLow.includes(SERVICE_PRIORITY[i])) return i;
             }
             return SERVICE_PRIORITY.length;
         };
+
+        // ===== PRE-COMPUTE LOOKUP TABLES (O(1) thay vÃ¬ O(N)) =====
+        const serviceMap = new Map(services.map(s => [s.id, s]));
+        
+        // Staff â†’ allowed service IDs
+        const staffAllowedSvcMap = {};
+        staffServices.forEach(ss => {
+            if (!staffAllowedSvcMap[ss.staff_id]) staffAllowedSvcMap[ss.staff_id] = new Set();
+            staffAllowedSvcMap[ss.staff_id].add(ss.service_id);
+        });
+
+        // Pre-parse leave time ranges (trÃ¡nh parse string trong vÃ²ng láº·p)
+        const parsedLeaves = {};
+        Object.keys(staffLeavesMap).forEach(staffId => {
+            parsedLeaves[staffId] = staffLeavesMap[staffId].map(leave => {
+                if (leave.leave_type === 'full_day') return { type: 'full_day' };
+                if (leave.leave_type === 'time_range' && leave.start_time && leave.end_time) {
+                    const lp = leave.start_time.split(':');
+                    const lep = leave.end_time.split(':');
+                    return {
+                        type: 'time_range',
+                        startMins: parseInt(lp[0]) * 60 + parseInt(lp[1]),
+                        endMins: parseInt(lep[0]) * 60 + parseInt(lep[1])
+                    };
+                }
+                return null;
+            }).filter(Boolean);
+        });
+
+        // Pre-filter staff per service (role + allowed services + full_day leave)
+        const baseEligibleByService = {};
+        services.forEach(svc => {
+            baseEligibleByService[svc.id] = staff.filter(s => {
+                // Full-day leave check
+                const leaves = parsedLeaves[s.id];
+                if (leaves && leaves.some(l => l.type === 'full_day')) return false;
+                // Role check
+                if (svc.required_role) {
+                    const reqRoles = svc.required_role.split(',').map(r => r.trim());
+                    if (!reqRoles.includes(s.role)) return false;
+                }
+                // Allowed services check
+                const allowed = staffAllowedSvcMap[s.id];
+                if (allowed && allowed.size > 0 && !allowed.has(svc.id)) return false;
+                return true;
+            });
+        });
+
+        // Pre-compute machines per service
+        const machinesByService = {};
+        services.forEach(svc => {
+            if (svc.requires_machine) {
+                machinesByService[svc.id] = allMachines.filter(m => m.service_id === svc.id);
+            }
+        });
+
         // Group patients by pKey then sort each group's services by priority
         const patientGroups = {};
-        patients.forEach((p) => {
+        patients.forEach(p => {
             const pKey = p.stt || p.name;
-            if (!patientGroups[pKey])
-                patientGroups[pKey] = [];
+            if (!patientGroups[pKey]) patientGroups[pKey] = [];
             patientGroups[pKey].push(p);
         });
-        // Build sorted patient list: sort services within each patient by priority
         const sortedPatients = [];
         const seenKeys = [];
-        const globalFirstServiceTimes = [];
-        patients.forEach((p) => {
+        patients.forEach(p => {
             const pKey = p.stt || p.name;
-            if (!seenKeys.includes(pKey))
-                seenKeys.push(pKey);
+            if (!seenKeys.includes(pKey)) seenKeys.push(pKey);
         });
-        // Sort services within each patient by priority, no stagger offset
-        seenKeys.forEach((pKey) => {
+        seenKeys.forEach(pKey => {
             const group = patientGroups[pKey];
             group.sort((a, b) => {
-                const svcA = services.find((s) => s.id === a.service_id);
-                const svcB = services.find((s) => s.id === b.service_id);
+                const svcA = serviceMap.get(a.service_id);
+                const svcB = serviceMap.get(b.service_id);
                 return getSvcPriority(svcA?.name || '') - getSvcPriority(svcB?.name || '');
             });
             sortedPatients.push(...group);
         });
-        // Giới hạn số bệnh nhân để tránh block quá lâu
-        const MAX_PATIENTS = 200;
+
+        const MAX_PATIENTS = 300;
         if (sortedPatients.length > MAX_PATIENTS) {
-            return res.status(400).json({ error: `Quá nhiều bệnh nhân (${sortedPatients.length}). Tối đa ${MAX_PATIENTS} mỗi lần.` });
+            return res.status(400).json({ error: `QuÃ¡ nhiá»u (${sortedPatients.length}). Tá»‘i Ä‘a ${MAX_PATIENTS}.` });
         }
-        
-        console.log(`[SCHEDULE] Bắt đầu xếp lịch cho ${sortedPatients.length} dịch vụ...`);
-        
-        sortedPatients.forEach((p) => {
-            const service = services.find(s => s.id === p.service_id);
+
+        console.log(`[SCHEDULE] Báº¯t Ä‘áº§u: ${seenKeys.length} BN, ${sortedPatients.length} DVKT, ${staff.length} NV`);
+        const startMs = Date.now();
+
+        // ===== THUáº¬T TOÃN Xáº¾P Lá»ŠCH Tá»I Æ¯U =====
+        try {
+        sortedPatients.forEach(p => {
+            const service = serviceMap.get(p.service_id);
             if (!service) {
-                unassignedPatients.push({ ...p, reason: 'Không tìm thấy cấu hình DVKT' });
+                unassignedPatients.push({ ...p, reason: 'KhÃ´ng tÃ¬m tháº¥y cáº¥u hÃ¬nh DVKT' });
                 return;
             }
             const pKey = p.stt || p.name;
-            if (!patientTimeline[pKey])
-                patientTimeline[pKey] = [];
+            if (!patientTimeline[pKey]) patientTimeline[pKey] = [];
+
             let foundSlot = false;
             let finalSlotData = null;
-            let loopCount = 0;
-            const MAX_LOOP = 1500; // Giới hạn vòng lặp tránh hang
-            // Only look at THIS session's new appointments (not pre-existing from DB) to find last end time
-            const sessionAppsForPatient = scheduledAppointments.filter(a => {
-                const aKey = a.stt || a.patient_name;
-                return aKey === pKey;
-            });
-            // Lấy thứ tự của bệnh nhân trong lượt xếp lịch này
+
+            // Session apps for this patient (Ä‘Ã£ xáº¿p trÆ°á»›c Ä‘Ã³ trong phiÃªn nÃ y)
+            const sessionAppsForPatient = scheduledAppointments.filter(a => (a.stt || a.patient_name) === pKey);
+
+            // Stagger: BN thá»© i báº¯t Ä‘áº§u muá»™n hÆ¡n (i*2+2) phÃºt
             const patientIndex = seenKeys.indexOf(pKey);
-            // Độ trễ để dành chỗ cho Tạo phiếu (1p) và Y lệnh (1p) duy nhất cho mỗi BN.
-            // BN thứ i cần (i*2 + 2) phút trống sau giờ mở cửa.
             const staggerMins = (patientIndex * 2) + 2;
-            let patientLastEndTime = midnightTime + (mStartMins + staggerMins) * 60 * 1000;
+            let patientLastEndTime = midnightTime + (mStartMins + staggerMins) * 60000;
+
             if (sessionAppsForPatient.length > 0) {
                 const lastApp = sessionAppsForPatient[sessionAppsForPatient.length - 1];
-                const lastSvc = services.find(s => s.id === lastApp.service_id);
+                const lastSvc = serviceMap.get(lastApp.service_id);
                 if (lastSvc) {
                     const lastStart = lastApp.start_time_ms;
-                    const hasIdleTime = !lastSvc.is_exclusive_staff && lastSvc.non_overlap_time < lastSvc.total_time;
-                    if (hasIdleTime) {
-                        patientLastEndTime = lastStart + lastSvc.non_overlap_time * 60 * 1000 + MIN_GAP;
-                    }
-                    else {
-                        patientLastEndTime = lastStart + lastSvc.total_time * 60 * 1000 + MIN_GAP;
-                    }
+                    const hasIdle = !lastSvc.is_exclusive_staff && lastSvc.non_overlap_time < lastSvc.total_time;
+                    patientLastEndTime = hasIdle
+                        ? lastStart + lastSvc.non_overlap_time * 60000 + MIN_GAP
+                        : lastStart + lastSvc.total_time * 60000 + MIN_GAP;
                 }
             }
-            
-            const machinesForSvc = service.requires_machine ? allMachines.filter(m => m.service_id === service.id) : [];
+
+            const machinesForSvc = machinesByService[service.id] || [];
+
+            // Base eligible staff (Ä‘Ã£ pre-filter role/service/full_day)
+            const baseStaff = baseEligibleByService[service.id] || [];
+            if (baseStaff.length === 0) {
+                unassignedPatients.push({ ...p, service: service.name, reason: 'KhÃ´ng cÃ³ NV nÃ o nháº­n DVKT nÃ y' });
+                return;
+            }
+
+            // Pre-build appsByStaff lookup
+            const appsByStaff = {};
+            for (const app of scheduledAppointments) {
+                if (!appsByStaff[app.staff_id]) appsByStaff[app.staff_id] = [];
+                appsByStaff[app.staff_id].push(app);
+            }
+
+            const svcNonOverlapMs = service.non_overlap_time * 60000;
+            const svcTotalMs = service.total_time * 60000;
+            const svcBedMs = service.bed_occupancy_time * 60000;
 
             for (let pass = 1; pass <= 3; pass++) {
-                loopCount = 0;
                 let attemptTime = patientLastEndTime;
-                let currentEnableLunchOt = (pass >= 2) ? enableLunchOt : false;
-                let currentEnableEveningOt = (pass === 3) ? enableEveningOt : false;
-                
-                // Pre-build staff → appointments lookup (chỉ cần tính 1 lần mỗi pass)
-                const appsByStaff = {};
-                for (const app of scheduledAppointments) {
-                    if (!appsByStaff[app.staff_id]) appsByStaff[app.staff_id] = [];
-                    appsByStaff[app.staff_id].push(app);
-                }
-                
-                while (!foundSlot && attemptTime < midnightTime + 24 * 60 * 60 * 1000 && loopCount < MAX_LOOP) {
+                const useLunchOt = (pass >= 2) && enableLunchOt;
+                const useEveningOt = (pass === 3) && enableEveningOt;
+                const dayEnd = useEveningOt ? eOtEndMins : aEndMins;
+                let loopCount = 0;
+
+                while (!foundSlot && loopCount < 2000) {
                     loopCount++;
                     const attemptMins = Math.floor((attemptTime - midnightTime) / 60000);
 
-                    if (!currentEnableEveningOt && attemptMins >= aEndMins) {
-                        break;
-                    }
-                    if (currentEnableEveningOt && attemptMins >= eOtEndMins) {
-                        break;
-                    }
+                    // ÄÃ£ vÆ°á»£t giá» lÃ m viá»‡c â†’ dá»«ng pass nÃ y
+                    if (attemptMins >= dayEnd) break;
 
-                    // Ép thời gian bắt đầu tối thiểu theo Stagger khi chuyển ca (Session)
+                    // Fast-forward qua khoáº£ng thá»i gian khÃ´ng há»£p lá»‡
                     if (attemptMins < mStartMins + staggerMins) {
-                        attemptTime = midnightTime + (mStartMins + staggerMins) * 60 * 1000;
+                        attemptTime = midnightTime + (mStartMins + staggerMins) * 60000;
                         continue;
                     }
-                    else if (attemptMins >= mEndMins && attemptMins < aStartMins && !currentEnableLunchOt) {
-                        attemptTime = midnightTime + aStartMins * 60 * 1000;
-                        continue;
-                    }
-                    else if (currentEnableLunchOt && attemptMins >= lOtEndMins && attemptMins < aStartMins) {
-                        attemptTime = midnightTime + aStartMins * 60 * 1000;
-                        continue;
-                    }
-
-                    // Đảm bảo Giờ Y lệnh/Tạo phiếu (suy ra từ Giờ thực hiện dịch vụ đầu tiên) không bị trùng lặp
-                    if (sessionAppsForPatient.length === 0) {
-                        let isTooClose = false;
-                        for (let usedTime of globalFirstServiceTimes) {
-                            if (Math.abs(attemptTime - usedTime) < 4 * 60 * 1000) {
-                                isTooClose = true;
-                                break;
-                            }
-                        }
-                        if (isTooClose) {
-                            attemptTime += 60 * 1000;
+                    if (attemptMins >= mEndMins && attemptMins < aStartMins) {
+                        if (useLunchOt && attemptMins < lOtEndMins) {
+                            // Trong giá» trÆ°a OT â†’ cho phÃ©p tiáº¿p tá»¥c
+                        } else {
+                            attemptTime = midnightTime + aStartMins * 60000;
                             continue;
                         }
                     }
-
-                    // Find eligible staff based on role AND allowed services AND leave status
-                    const eligibleStaff = staff.filter(s => {
-                        // === CHECK NGHỈ PHÉP ===
-                        const leaves = staffLeavesMap[s.id];
-                        if (leaves) {
-                            for (const leave of leaves) {
-                                if (leave.leave_type === 'full_day') {
-                                    return false; // Nghỉ cả ngày → loại hoàn toàn
-                                }
-                                if (leave.leave_type === 'time_range' && leave.start_time && leave.end_time) {
-                                    // Tính thời gian nghỉ
-                                    const leaveParts = leave.start_time.split(':');
-                                    const leaveStartMins = parseInt(leaveParts[0]) * 60 + parseInt(leaveParts[1]);
-                                    const leaveEndParts = leave.end_time.split(':');
-                                    const leaveEndMins = parseInt(leaveEndParts[0]) * 60 + parseInt(leaveEndParts[1]);
-                                    // Tính thời gian thao tác DVKT
-                                    const dvktStartMins = Math.floor((attemptTime - midnightTime) / 60000);
-                                    const dvktEndMins = dvktStartMins + service.non_overlap_time;
-                                    // Check overlap: nếu thời gian DVKT chồng lên thời gian nghỉ → loại
-                                    if (dvktStartMins < leaveEndMins && dvktEndMins > leaveStartMins) {
-                                        return false;
-                                    }
-                                }
-                            }
-                        }
-                        // === CHECK ROLE ===
-                        if (service.required_role) {
-                            const reqRoles = service.required_role.split(',').map((r) => r.trim());
-                            if (!reqRoles.includes(s.role))
-                                return false;
-                        }
-                        const allowed = staffServices.filter(ss => ss.staff_id === s.id).map(ss => ss.service_id);
-                        if (allowed.length > 0 && !allowed.includes(service.id))
-                            return false;
-                        return true;
-                    });
-                    if (eligibleStaff.length === 0) {
-                        if (pass === 3) {
-                            unassignedPatients.push({ ...p, service: service.name, reason: `Không có Nhân viên nào nhận DVKT này` });
-                        }
-                        break; // break the while loop, don't schedule
+                    if (attemptMins >= aEndMins && attemptMins < eOtEndMins && useEveningOt) {
+                        // Trong giá» tá»‘i OT â†’ cho phÃ©p tiáº¿p tá»¥c
+                    } else if (attemptMins >= aEndMins) {
+                        break;
                     }
-                    const patientStaffIds = sessionAppsForPatient.map(app => app.staff_id);
-                    eligibleStaff.sort((a,b) => {
-                        const aServed = patientStaffIds.includes(a.id) ? -1 : 0;
-                        const bServed = patientStaffIds.includes(b.id) ? -1 : 0;
-                        if (aServed !== bServed) return aServed - bServed;
-                        return staffTimeline[a.id].length - staffTimeline[b.id].length;
-                    });
+
                     const actionStart = attemptTime;
-                    const actionEnd = actionStart + service.non_overlap_time * 60 * 1000;
-                    const totalEnd = actionStart + service.total_time * 60 * 1000;
-                    const bedEnd = actionStart + service.bed_occupancy_time * 60 * 1000;
+                    const actionEnd = actionStart + svcNonOverlapMs;
+                    const totalEnd = actionStart + svcTotalMs;
+                    const bedEnd = actionStart + svcBedMs;
 
-                    const attemptEndMins = Math.floor((totalEnd - midnightTime) / 60000);
-                    const fitsMorning = attemptMins >= mStartMins && attemptEndMins <= mEndMins;
-                    const fitsLunchOt = currentEnableLunchOt && attemptMins >= mStartMins && attemptEndMins <= lOtEndMins;
-                    const fitsAfternoon = attemptMins >= aStartMins && attemptEndMins <= aEndMins;
-                    const fitsEveningOt = currentEnableEveningOt && attemptMins >= aStartMins && attemptEndMins <= eOtEndMins;
-                    const exceedsShift = !fitsMorning && !fitsLunchOt && !fitsAfternoon && !fitsEveningOt;
+                    // Check: DVKT cÃ³ vá»«a trong ca lÃ m viá»‡c khÃ´ng?
+                    const endMins = Math.floor((totalEnd - midnightTime) / 60000);
+                    const fitsMorning = attemptMins >= mStartMins && endMins <= mEndMins;
+                    const fitsLunchOt = useLunchOt && attemptMins >= mStartMins && endMins <= lOtEndMins;
+                    const fitsAfternoon = attemptMins >= aStartMins && endMins <= aEndMins;
+                    const fitsEveningOt = useEveningOt && attemptMins >= aStartMins && endMins <= eOtEndMins;
 
-                    if (exceedsShift) {
-                        // Nhảy cóc đến ca làm việc tiếp theo để tiết kiệm vòng lặp (Fast-forward)
-                        if (attemptMins < mStartMins) attemptTime = midnightTime + mStartMins * 60000;
-                        else if (attemptMins >= mEndMins && currentEnableLunchOt && attemptMins < lOtStartMins) attemptTime = midnightTime + lOtStartMins * 60000;
-                        else if (attemptMins >= (currentEnableLunchOt ? lOtEndMins : mEndMins) && attemptMins < aStartMins) attemptTime = midnightTime + aStartMins * 60000;
-                        else if (attemptMins >= aEndMins && currentEnableEveningOt && attemptMins < eOtStartMins) attemptTime = midnightTime + eOtStartMins * 60000;
-                        else {
-                            // Hết giờ làm việc hôm nay
-                            break;
+                    if (!fitsMorning && !fitsLunchOt && !fitsAfternoon && !fitsEveningOt) {
+                        // Nháº£y Ä‘áº¿n ca tiáº¿p theo
+                        if (attemptMins < aStartMins) {
+                            attemptTime = midnightTime + aStartMins * 60000;
+                        } else {
+                            break; // Háº¿t ngÃ y
                         }
                         continue;
                     }
 
-                    const activeBeds = bedTimeline.filter(busy => actionStart < busy.end && bedEnd > busy.start).length;
-                    const isBedBusy = activeBeds >= 10;
-                    if (isBedBusy) {
+                    // Check: GiÆ°á»ng cÃ²n trá»‘ng?
+                    let activeBeds = 0;
+                    for (const busy of bedTimeline) {
+                        if (actionStart < busy.end && bedEnd > busy.start) {
+                            activeBeds++;
+                            if (activeBeds >= 10) break;
+                        }
+                    }
+                    if (activeBeds >= 10) {
                         attemptTime += 60000;
                         continue;
                     }
 
-                    // BN check: các DVKT trên cùng 1 BN phải cách nhau ít nhất MIN_GAP
-                    let isPatientBusy = patientTimeline[pKey].some(busy => actionStart < (busy.end + MIN_GAP) && (totalEnd + MIN_GAP) > busy.start);
+                    // Check: BN cÃ³ Ä‘ang báº­n khÃ´ng?
+                    let isPatientBusy = patientTimeline[pKey].some(
+                        busy => actionStart < (busy.end + MIN_GAP) && (totalEnd + MIN_GAP) > busy.start
+                    );
                     
-                    const newServiceHasIdleTime = !service.is_exclusive_staff &&
-                        !service.no_patient_overlap &&
-                        service.non_overlap_time < service.total_time;
-                    
-                    if (isPatientBusy && newServiceHasIdleTime) {
-                        const canOverlapAll = patientTimeline[pKey].every(busy => {
-                            const clashing = (actionStart < busy.end && totalEnd > busy.start);
-                            if (!clashing) return true;
-                            
-                            const clashingApp = sessionAppsForPatient.find(a => a.start_time_ms === busy.start);
-                            if (!clashingApp) return false;
-                            const clashingSvc = services.find(sv => sv.id === clashingApp.service_id);
-                            if (!clashingSvc) return false;
-                            
-                            const newAllowList = service.allow_idle_overlap_with ? service.allow_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                            const newDenyList = service.deny_idle_overlap_with ? service.deny_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                            const oldAllowList = clashingSvc.allow_idle_overlap_with ? clashingSvc.allow_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                            const oldDenyList = clashingSvc.deny_idle_overlap_with ? clashingSvc.deny_idle_overlap_with.split(',').map(x=>x.trim()) : [];
-                            
-                            const idNewStr = String(service.id);
-                            const idOldStr = String(clashingSvc.id);
+                    if (isPatientBusy) {
+                        const newHasIdle = !service.is_exclusive_staff && !service.no_patient_overlap && service.non_overlap_time < service.total_time;
+                        if (newHasIdle) {
+                            const canOverlap = patientTimeline[pKey].every(busy => {
+                                if (!(actionStart < busy.end && totalEnd > busy.start)) return true; // khÃ´ng clash
+                                const clashApp = sessionAppsForPatient.find(a => a.start_time_ms === busy.start);
+                                if (!clashApp) return false;
+                                const clashSvc = serviceMap.get(clashApp.service_id);
+                                if (!clashSvc) return false;
+                                
+                                const oldHasIdle = !clashSvc.is_exclusive_staff && clashSvc.non_overlap_time < clashSvc.total_time;
+                                if (!oldHasIdle && !clashSvc.no_patient_overlap) return false;
+                                if (clashSvc.no_patient_overlap) return false;
+                                if (actionStart === busy.start) return false;
 
-                            if (newDenyList.includes(idOldStr) || oldDenyList.includes(idNewStr)) return false; 
-                            const isExplicitlyAllowed = newAllowList.includes(idOldStr) || oldAllowList.includes(idNewStr);
-
-                            if (!isExplicitlyAllowed) {
-                                if (clashingSvc.no_patient_overlap) return false;
-                                const oldHasIdleTime = !clashingSvc.is_exclusive_staff && clashingSvc.non_overlap_time < clashingSvc.total_time;
-                                if (!oldHasIdleTime) return false;
-                            }
-
-                            if (actionStart === busy.start) return false;
-                            const clashingTotalEnd = busy.start + clashingSvc.total_time * 60 * 1000;
-                            if (totalEnd === clashingTotalEnd) return false;
-                            if (actionStart <= clashingTotalEnd && actionStart >= (clashingTotalEnd - MIN_GAP)) return false;
-                            if (totalEnd <= busy.start + MIN_GAP && totalEnd >= busy.start) return false;
-                            
-                            if (busy.start <= actionStart) {
-                                const oldBusyEnd = busy.start + clashingSvc.non_overlap_time * 60 * 1000;
-                                if (actionStart < oldBusyEnd + MIN_GAP) return false;
-                            } else {
-                                const newBusyEnd = actionStart + service.non_overlap_time * 60 * 1000;
-                                if (busy.start < newBusyEnd + MIN_GAP) return false;
-                            }
-                            return true;
-                        });
-                        if (canOverlapAll) isPatientBusy = false;
+                                // Check non-overlap thá»i gian
+                                if (busy.start <= actionStart) {
+                                    const oldBusyEnd = busy.start + clashSvc.non_overlap_time * 60000;
+                                    if (actionStart < oldBusyEnd + MIN_GAP) return false;
+                                } else {
+                                    const newBusyEnd = actionStart + svcNonOverlapMs;
+                                    if (busy.start < newBusyEnd + MIN_GAP) return false;
+                                }
+                                return true;
+                            });
+                            if (canOverlap) isPatientBusy = false;
+                        }
                     }
                     if (isPatientBusy) {
-                        attemptTime += 60000;
+                        // SMART JUMP: nháº£y Ä‘áº¿n khi BN ráº£nh
+                        let nextFree = attemptTime + 60000;
+                        for (const busy of patientTimeline[pKey]) {
+                            if (busy.end + MIN_GAP > attemptTime && busy.end + MIN_GAP < nextFree + svcTotalMs) {
+                                nextFree = Math.max(nextFree, busy.end + MIN_GAP);
+                            }
+                        }
+                        attemptTime = nextFree;
                         continue;
                     }
 
-                    // Check specific machine availability
+                    // Check: MÃ¡y cÃ²n trá»‘ng?
                     let assignedMachineId = null;
                     if (service.requires_machine) {
-                        // Sort inside loop because machineAllocations lengths might change if other patients are scheduled
-                        machinesForSvc.sort((a,b) => machineAllocations[a.id].length - machineAllocations[b.id].length);
                         for (const m of machinesForSvc) {
-                            const isMbusy = machineAllocations[m.id].some(busy => actionStart < busy.end && totalEnd > busy.start);
-                            if (!isMbusy) {
-                                assignedMachineId = m.id;
-                                break;
-                            }
+                            const isBusy = machineAllocations[m.id].some(busy => actionStart < busy.end && totalEnd > busy.start);
+                            if (!isBusy) { assignedMachineId = m.id; break; }
                         }
                         if (!assignedMachineId) {
                             attemptTime += 60000;
@@ -713,74 +696,104 @@ app.post("/api/schedule", async (req, res) => {
                         }
                     }
 
-                    // Check patient end conflicts
-                    let hasPatientEndConflict = false;
-                    for (const existingApp of sessionAppsForPatient) {
-                        const existSvc = services.find(sv => sv.id === existingApp.service_id);
-                        if (!existSvc) continue;
-                        const existStart = existingApp.start_time_ms;
-                        const existTotalEnd = existingApp.total_end_ms;
-                        
-                        if (Math.abs(totalEnd - existTotalEnd) < MIN_GAP) hasPatientEndConflict = true;
-                        if (Math.abs(actionStart - existTotalEnd) < MIN_GAP) hasPatientEndConflict = true;
-                        if (Math.abs(totalEnd - existStart) < MIN_GAP) hasPatientEndConflict = true;
+                    // Check: Giá» káº¿t thÃºc BN cÃ³ trÃ¹ng khÃ´ng?
+                    let patientConflict = false;
+                    for (const ea of sessionAppsForPatient) {
+                        if (Math.abs(totalEnd - ea.total_end_ms) < MIN_GAP ||
+                            Math.abs(actionStart - ea.total_end_ms) < MIN_GAP ||
+                            Math.abs(totalEnd - ea.start_time_ms) < MIN_GAP) {
+                            patientConflict = true;
+                            break; // EARLY EXIT
+                        }
                     }
-                    if (hasPatientEndConflict) {
+                    if (patientConflict) {
                         attemptTime += 60000;
                         continue;
                     }
 
-                    for (const s of eligibleStaff) {
-                        // Kiểm tra NV có bận không
-                        const isStaffBusy = service.is_exclusive_staff
-                            ? staffTimeline[s.id].some(busy => actionStart < (busy.end + MIN_GAP) && (totalEnd + MIN_GAP) > busy.start)
-                            : staffTimeline[s.id].some(busy => {
-                                if (busy.type === 'action') {
-                                    return actionStart < (busy.end + MIN_GAP) && (actionEnd + MIN_GAP) > busy.start;
-                                }
-                                return false;
-                            });
-                        if (isStaffBusy) continue;
-
-                        // Ràng buộc cứng với nhân viên: giờ kết thúc THAO TÁC không được trùng
-                        let hasStaffEndConflict = false;
-                        
-                        const staffApps = appsByStaff[s.id] || [];
-                        for (const existingApp of staffApps) {
-                            const existSvc = services.find(sv => sv.id === existingApp.service_id);
-                            if (!existSvc) continue;
-                            const existStart = existingApp.start_time_ms;
-                            const existTotalEnd = existingApp.total_end_ms;
-                            const existActionEnd = existingApp.action_end_ms;
-                            
-                            if (Math.abs(totalEnd - existTotalEnd) < MIN_GAP) hasStaffEndConflict = true;
-                            if (Math.abs(actionStart - existTotalEnd) < MIN_GAP) hasStaffEndConflict = true;
-                            if (Math.abs(totalEnd - existStart) < MIN_GAP) hasStaffEndConflict = true;
-                            if (Math.abs(actionEnd - existActionEnd) < MIN_GAP) hasStaffEndConflict = true;
+                    // Filter staff by time_range leave (chá»‰ check leave, role Ä‘Ã£ pre-filter)
+                    const eligibleStaff = baseStaff.filter(s => {
+                        const leaves = parsedLeaves[s.id];
+                        if (!leaves) return true;
+                        for (const leave of leaves) {
+                            if (leave.type === 'time_range') {
+                                const dvktEnd = attemptMins + service.non_overlap_time;
+                                if (attemptMins < leave.endMins && dvktEnd > leave.startMins) return false;
+                            }
                         }
-                        if (hasStaffEndConflict) continue;
+                        return true;
+                    });
+
+                    if (eligibleStaff.length === 0) {
+                        attemptTime += 60000;
+                        continue;
+                    }
+
+                    // Æ¯u tiÃªn NV Ä‘Ã£ phá»¥c vá»¥ BN nÃ y, sau Ä‘Ã³ NV Ã­t viá»‡c nháº¥t
+                    const patientStaffIds = sessionAppsForPatient.map(a => a.staff_id);
+                    eligibleStaff.sort((a, b) => {
+                        const aPri = patientStaffIds.includes(a.id) ? -1 : 0;
+                        const bPri = patientStaffIds.includes(b.id) ? -1 : 0;
+                        if (aPri !== bPri) return aPri - bPri;
+                        return (staffTimeline[a.id]?.length || 0) - (staffTimeline[b.id]?.length || 0);
+                    });
+
+                    // TÃ¬m NV trá»‘ng
+                    let staffFound = false;
+                    for (const s of eligibleStaff) {
+                        // Check NV báº­n
+                        const timeline = staffTimeline[s.id];
+                        let busy = false;
+                        if (service.is_exclusive_staff) {
+                            busy = timeline.some(b => actionStart < (b.end + MIN_GAP) && (totalEnd + MIN_GAP) > b.start);
+                        } else {
+                            busy = timeline.some(b => b.type === 'action' && actionStart < (b.end + MIN_GAP) && (actionEnd + MIN_GAP) > b.start);
+                        }
+                        if (busy) continue;
+
+                        // Check giá» káº¿t thÃºc NV trÃ¹ng
+                        let staffConflict = false;
+                        const sApps = appsByStaff[s.id] || [];
+                        for (const ea of sApps) {
+                            if (Math.abs(totalEnd - ea.total_end_ms) < MIN_GAP ||
+                                Math.abs(actionStart - ea.total_end_ms) < MIN_GAP ||
+                                Math.abs(totalEnd - ea.start_time_ms) < MIN_GAP ||
+                                Math.abs(actionEnd - ea.action_end_ms) < MIN_GAP) {
+                                staffConflict = true;
+                                break; // EARLY EXIT
+                            }
+                        }
+                        if (staffConflict) continue;
 
                         finalSlotData = { s, actionStart, actionEnd, totalEnd, bedEnd, assignedMachineId };
                         foundSlot = true;
+                        staffFound = true;
                         break;
                     }
 
-                    if (!foundSlot)
-                        attemptTime += 1 * 60 * 1000; // Tăng 1 phút mỗi bước kiểm tra
-                }
-                if (foundSlot) {
-                    if (sessionAppsForPatient.length === 0) {
-                        globalFirstServiceTimes.push(attemptTime);
+                    if (!staffFound) {
+                        // SMART JUMP: nháº£y Ä‘áº¿n khi NV Ä‘áº§u tiÃªn ráº£nh
+                        let earliest = Infinity;
+                        for (const s of eligibleStaff) {
+                            for (const b of staffTimeline[s.id]) {
+                                if (b.end + MIN_GAP > attemptTime && b.end + MIN_GAP < earliest) {
+                                    earliest = b.end + MIN_GAP;
+                                }
+                            }
+                        }
+                        attemptTime = earliest < Infinity ? Math.max(earliest, attemptTime + 60000) : attemptTime + 60000;
                     }
-                    break;
-                }
-            }
+                } // end while
+
+                if (foundSlot) break; // ThoÃ¡t pass loop
+            } // end pass
+
+            // Ghi nháº­n káº¿t quáº£
             if (foundSlot && finalSlotData) {
                 const { s, actionStart, actionEnd, totalEnd, bedEnd } = finalSlotData;
                 if (service.is_exclusive_staff) {
                     staffTimeline[s.id].push({ start: actionStart, end: totalEnd, type: 'action' });
-                }
-                else {
+                } else {
                     staffTimeline[s.id].push({ start: actionStart, end: actionEnd, type: 'action' });
                 }
                 patientTimeline[pKey].push({ start: actionStart, end: totalEnd });
@@ -800,29 +813,22 @@ app.post("/api/schedule", async (req, res) => {
                     total_end_ms: totalEnd,
                     status: 'scheduled'
                 });
+            } else {
+                unassignedPatients.push({ ...p, service: service?.name, reason: 'Háº¿t sá»©c chá»©a / káº¹t lá»‹ch' });
             }
-            if (!foundSlot) {
-                const reasons = unassignedPatients.map(u => u.name);
-                if (!reasons.includes(p.name)) {
-                    unassignedPatients.push({ ...p, service: service.name, reason: 'Phòng khám đã hết sức chứa / bị kẹt lịch' });
-                }
-            }
-        });
-        
-    if (scheduledAppointments.length > 0) {
-        const toInsert = scheduledAppointments.map(app => ({
-            patient_name: app.patient_name,
-            service_id: app.service_id,
-            staff_id: app.staff_id,
-            machine_id: app.machine_id,
-            start_time: app.start_time,
-            status: app.status
-        }));
-        await supabase.from("appointments").insert(toInsert);
-    }
-    
-    console.log(`[SCHEDULE] Xếp lịch xong, thành công: ${scheduledAppointments.length}, Thất bại: ${unassignedPatients.length}`);
-    res.json({ scheduled: scheduledAppointments, unassigned: unassignedPatients });
+        }); // end sortedPatients.forEach
+
+        const elapsed = Date.now() - startMs;
+        console.log(`[SCHEDULE] Xong trong ${elapsed}ms. OK: ${scheduledAppointments.length}, Fail: ${unassignedPatients.length}`);
+
+        // KHÃ”NG LÆ¯U DB - chá»‰ tráº£ káº¿t quáº£ Ä‘á»ƒ frontend hiá»ƒn thá»‹
+        // Frontend sáº½ gá»i API save riÃªng náº¿u user xÃ¡c nháº­n
+        res.json({ scheduled: scheduledAppointments, unassigned: unassignedPatients });
+
+        } catch (err) {
+            console.error('[SCHEDULE] Lá»–I:', err.message, err.stack);
+            res.status(500).json({ error: 'Lá»—i xáº¿p lá»‹ch: ' + err.message });
+        }
 });
 
 app.use(express.static(path.join(process.cwd(), "public")));
@@ -837,5 +843,6 @@ app.use((req, res) => {
         res.sendFile(path.join(process.cwd(), "public", "index.html"));
     }
 });
+
 
 export default app;
