@@ -437,7 +437,7 @@ app.post("/api/schedule", async (req, res) => {
             const patientIndex = seenKeys.indexOf(pKey);
             // Độ trễ để dành chỗ cho Tạo phiếu (1p) và Y lệnh (1p) duy nhất cho mỗi BN.
             // BN thứ i cần (i*2 + 2) phút trống sau giờ mở cửa.
-            const staggerMins = (patientIndex * 2) + 2;
+            const staggerMins = (patientIndex * 2);
             let patientLastEndTime = midnightTime + (mStartMins + staggerMins) * 60 * 1000;
             if (sessionAppsForPatient.length > 0) {
                 const lastApp = sessionAppsForPatient[sessionAppsForPatient.length - 1];
@@ -456,6 +456,8 @@ app.post("/api/schedule", async (req, res) => {
             for (let pass = 1; pass <= 2; pass++) {
                 loopCount = 0;
                 let attemptTime = patientLastEndTime;
+                let currentEnableLunchOt = (pass === 1) ? false : enableLunchOt;
+                let currentEnableEveningOt = (pass === 1) ? false : enableEveningOt;
                 while (!foundSlot && attemptTime < midnightTime + 24 * 60 * 60 * 1000 && loopCount < MAX_LOOP) {
                     loopCount++;
                     const vnDate = new Date(attemptTime + 7 * 60 * 60 * 1000);
@@ -465,11 +467,11 @@ app.post("/api/schedule", async (req, res) => {
                         attemptTime = midnightTime + (mStartMins + staggerMins) * 60 * 1000;
                         continue;
                     }
-                    else if (attemptMins >= mEndMins && attemptMins < aStartMins && !enableLunchOt) {
+                    else if (attemptMins >= mEndMins && attemptMins < aStartMins && !currentEnableLunchOt) {
                         attemptTime = midnightTime + aStartMins * 60 * 1000;
                         continue;
                     }
-                    else if (enableLunchOt && attemptMins >= lOtEndMins && attemptMins < aStartMins) {
+                    else if (currentEnableLunchOt && attemptMins >= lOtEndMins && attemptMins < aStartMins) {
                         attemptTime = midnightTime + aStartMins * 60 * 1000;
                         continue;
                     }
@@ -526,9 +528,9 @@ app.post("/api/schedule", async (req, res) => {
                         const attemptEndDate = new Date(totalEnd + 7 * 60 * 60 * 1000);
                         const attemptEndMins = attemptEndDate.getUTCHours() * 60 + attemptEndDate.getUTCMinutes();
                         const fitsMorning = attemptMins >= mStartMins && attemptEndMins <= mEndMins;
-                        const fitsLunchOt = enableLunchOt && attemptMins >= mStartMins && attemptEndMins <= lOtEndMins;
+                        const fitsLunchOt = currentEnableLunchOt && attemptMins >= mStartMins && attemptEndMins <= lOtEndMins;
                         const fitsAfternoon = attemptMins >= aStartMins && attemptEndMins <= aEndMins;
-                        const fitsEveningOt = enableEveningOt && attemptMins >= aStartMins && attemptEndMins <= eOtEndMins;
+                        const fitsEveningOt = currentEnableEveningOt && attemptMins >= aStartMins && attemptEndMins <= eOtEndMins;
                         const exceedsShift = !fitsMorning && !fitsLunchOt && !fitsAfternoon && !fitsEveningOt;
 
                         // Kiểm tra NV có bận không: kết thúc ca trước + MIN_GAP mới được bắt đầu ca mới
