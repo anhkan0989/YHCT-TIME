@@ -395,6 +395,7 @@ app.post("/api/schedule", async (req, res) => {
         // Build sorted patient list: sort services within each patient by priority
         const sortedPatients = [];
         const seenKeys = [];
+        const globalFirstServiceTimes = [];
         patients.forEach((p) => {
             const pKey = p.stt || p.name;
             if (!seenKeys.includes(pKey))
@@ -475,6 +476,22 @@ app.post("/api/schedule", async (req, res) => {
                         attemptTime = midnightTime + aStartMins * 60 * 1000;
                         continue;
                     }
+
+                    // Đảm bảo Giờ Y lệnh/Tạo phiếu (suy ra từ Giờ thực hiện dịch vụ đầu tiên) không bị trùng lặp
+                    if (sessionAppsForPatient.length === 0) {
+                        let isTooClose = false;
+                        for (let usedTime of globalFirstServiceTimes) {
+                            if (Math.abs(attemptTime - usedTime) < 3 * 60 * 1000) {
+                                isTooClose = true;
+                                break;
+                            }
+                        }
+                        if (isTooClose) {
+                            attemptTime += 60 * 1000;
+                            continue;
+                        }
+                    }
+
                     // Find eligible staff based on role AND allowed services AND leave status
                     const eligibleStaff = staff.filter(s => {
                         // === CHECK NGHỈ PHÉP ===
@@ -715,8 +732,12 @@ app.post("/api/schedule", async (req, res) => {
                     if (!foundSlot)
                         attemptTime += 1 * 60 * 1000; // Tăng 1 phút mỗi bước kiểm tra
                 }
-                if (foundSlot)
+                if (foundSlot) {
+                    if (sessionAppsForPatient.length === 0) {
+                        globalFirstServiceTimes.push(attemptTime);
+                    }
                     break;
+                }
             }
             if (foundSlot && finalSlotData) {
                 const { s, actionStart, actionEnd, totalEnd, bedEnd } = finalSlotData;
