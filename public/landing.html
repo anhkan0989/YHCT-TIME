@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chọn Đơn Vị - YHCT Scheduler</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            text-align: center;
+            width: 100%;
+            max-width: 400px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #1a73e8;
+            margin-bottom: 24px;
+        }
+        input {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 20px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #1a73e8;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #1557b0;
+        }
+        .error {
+            color: red;
+            margin-bottom: 15px;
+            display: none;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Nhập Mã Đơn Vị YHCT</h2>
+    <div id="error-msg" class="error">Vui lòng nhập mã đơn vị hợp lệ!</div>
+    <input type="text" id="tenant-input" placeholder="VD: 48225, 49917..." onkeypress="handleEnter(event)">
+    <button onclick="setTenant()">Truy cập Hệ thống</button>
+</div>
+
+<script>
+    function setTenant() {
+        const tenantId = document.getElementById('tenant-input').value.trim();
+        if (!tenantId) {
+            document.getElementById('error-msg').style.display = 'block';
+            return;
+        }
+        
+        // Lưu cookie trong 1 năm
+        const d = new Date();
+        d.setTime(d.getTime() + (365*24*60*60*1000));
+        document.cookie = "tenant_id=" + tenantId + ";expires=" + d.toUTCString() + ";path=/";
+        
+        // Chuyển hướng về phần mềm gốc
+        window.location.href = '/';
+    }
+
+    function handleEnter(e) {
+        if (e.key === 'Enter') {
+            setTenant();
+        }
+    }
+</script>
+
+</body>
+</html>

@@ -3,6 +3,7 @@ import cors from "cors";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import cookieParser from "cookie-parser";
 
 dotenv.config();
 
@@ -13,6 +14,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 
 app.get("/api/settings", async (req, res) => {
     const { data } = await supabase.from("settings").select("*");
@@ -81,23 +83,31 @@ app.delete("/api/staff/:id", async (req, res) => {
 });
 
 app.get("/api/services", async (req, res) => {
-    const { data } = await supabase.from("services").select("*");
+    const tenantId = req.cookies.tenant_id;
+    let query = supabase.from("services").select("*");
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data } = await query;
     res.json(data || []);
 });
 
 app.post("/api/services", async (req, res) => {
-    const { id, name, total_time, non_overlap_time, requires_machine, bed_occupancy_time, is_exclusive_staff, no_patient_overlap, required_role, allow_idle_overlap_with, deny_idle_overlap_with } = req.body;
-    if (!name || total_time == null || non_overlap_time == null) {
+    let { id, name, total_time, non_overlap_time, requires_machine, bed_occupancy_time, is_exclusive_staff, no_patient_overlap, required_role, allow_idle_overlap_with, deny_idle_overlap_with } = req.body;
+    total_time = parseInt(total_time) || 0;
+    non_overlap_time = parseInt(non_overlap_time) || 0;
+    bed_occupancy_time = parseInt(bed_occupancy_time) || total_time;
+    if (!name) {
         return res.status(400).json({ error: "Missing required fields" });
     }
     
+    const tenantId = req.cookies.tenant_id;
     const newId = id || Math.random().toString(36).substr(2, 9);
 
     const { data, error } = await supabase.from("services").insert({
         id: newId, name, total_time, non_overlap_time, requires_machine: requires_machine ? true : false, 
-        bed_occupancy_time: bed_occupancy_time || total_time, is_exclusive_staff: is_exclusive_staff ? true : false, 
+        bed_occupancy_time, is_exclusive_staff: is_exclusive_staff ? true : false, 
         no_patient_overlap: no_patient_overlap ? true : false, required_role: required_role || '', 
-        allow_idle_overlap_with: allow_idle_overlap_with || '', deny_idle_overlap_with: deny_idle_overlap_with || ''
+        allow_idle_overlap_with: allow_idle_overlap_with || '', deny_idle_overlap_with: deny_idle_overlap_with || '',
+        tenant_id: tenantId || null
     }).select().single();
     
     if (error) return res.status(400).json({ error: error.message });
@@ -106,10 +116,13 @@ app.post("/api/services", async (req, res) => {
 
 app.put("/api/services/:id", async (req, res) => {
     const { id } = req.params;
-    const { name, total_time, non_overlap_time, requires_machine, bed_occupancy_time, is_exclusive_staff, no_patient_overlap, required_role, allow_idle_overlap_with, deny_idle_overlap_with } = req.body;
+    let { name, total_time, non_overlap_time, requires_machine, bed_occupancy_time, is_exclusive_staff, no_patient_overlap, required_role, allow_idle_overlap_with, deny_idle_overlap_with } = req.body;
+    total_time = parseInt(total_time) || 0;
+    non_overlap_time = parseInt(non_overlap_time) || 0;
+    bed_occupancy_time = parseInt(bed_occupancy_time) || total_time;
     const { error } = await supabase.from("services").update({
         name, total_time, non_overlap_time, requires_machine: requires_machine ? true : false, 
-        bed_occupancy_time: bed_occupancy_time || total_time, is_exclusive_staff: is_exclusive_staff ? true : false, 
+        bed_occupancy_time, is_exclusive_staff: is_exclusive_staff ? true : false, 
         no_patient_overlap: no_patient_overlap ? true : false, required_role: required_role || '', 
         allow_idle_overlap_with: allow_idle_overlap_with || '', deny_idle_overlap_with: deny_idle_overlap_with || ''
     }).eq("id", id);
@@ -233,8 +246,12 @@ app.post("/api/schedule", async (req, res) => {
     const { patients, startTime } = req.body;
     const scheduleDate = startTime ? new Date(startTime).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
     
+    const tenantId = req.cookies.tenant_id;
+    let servicesQuery = supabase.from("services").select("*");
+    if (tenantId) servicesQuery = servicesQuery.eq("tenant_id", tenantId);
+
     const [servicesRes, staffRes, staffServicesRes, settingsRes, machinesRes, staffLeavesRes, existingAppsRes] = await Promise.all([
-        supabase.from("services").select("*"),
+        servicesQuery,
         supabase.from("staff").select("*"),
         supabase.from("staff_services").select("*"),
         supabase.from("settings").select("*"),
@@ -453,15 +470,25 @@ app.post("/api/schedule", async (req, res) => {
                         }
                         break; // break the while loop, don't schedule
                     }
+                    eligibleStaff.sort((a,b) => staffTimeline[a.id].length - staffTimeline[b.id].length);
                     for (const s of eligibleStaff) {
                         const actionStart = attemptTime;
                         const actionEnd = actionStart + service.non_overlap_time * 60 * 1000;
                         const totalEnd = actionStart + service.total_time * 60 * 1000;
                         const bedEnd = actionStart + service.bed_occupancy_time * 60 * 1000;
+
+                        const attemptEndDate = new Date(totalEnd);
+                        const attemptEndMins = attemptEndDate.getHours() * 60 + attemptEndDate.getMinutes();
+                        const fitsMorning = attemptMins >= mStartMins && attemptEndMins <= mEndMins;
+                        const fitsLunchOt = enableLunchOt && attemptMins >= mStartMins && attemptEndMins <= lOtEndMins;
+                        const fitsAfternoon = attemptMins >= aStartMins && attemptEndMins <= aEndMins;
+                        const fitsEveningOt = enableEveningOt && attemptMins >= aStartMins && attemptEndMins <= eOtEndMins;
+                        const exceedsShift = !fitsMorning && !fitsLunchOt && !fitsAfternoon && !fitsEveningOt;
+
                         // Kiểm tra NV có bận không: kết thúc ca trước + MIN_GAP mới được bắt đầu ca mới
                         // Dùng actionEnd (non_overlap_time) cho non-exclusive, totalEnd cho exclusive
                         // QUAN TRỌNG: Dùng >= thay vì > để BẮT BUỘC khoảng cách, không cho trùng giờ
-                        const isStaffBusy = service.is_exclusive_staff
+                        const isStaffBusy = exceedsShift || (service.is_exclusive_staff
                             ? staffTimeline[s.id].some(busy => actionStart < (busy.end + MIN_GAP) && (totalEnd + MIN_GAP) > busy.start)
                             : staffTimeline[s.id].some(busy => {
                                 if (busy.type === 'action') {
@@ -470,7 +497,7 @@ app.post("/api/schedule", async (req, res) => {
                                     return actionStart < (busy.end + MIN_GAP) && (actionEnd + MIN_GAP) > busy.start;
                                 }
                                 return false;
-                            });
+                            }));
                         const tooClose = false; // Đã tích hợp MIN_GAP vào isStaffBusy
                         const activeBeds = bedTimeline.filter(busy => actionStart < busy.end && bedEnd > busy.start).length;
                         const isBedBusy = activeBeds >= 10;
@@ -583,6 +610,7 @@ app.post("/api/schedule", async (req, res) => {
                         let assignedMachineId = null;
                         if (service.requires_machine) {
                             const machinesForSvc = allMachines.filter(m => m.service_id === service.id);
+                            machinesForSvc.sort((a,b) => machineAllocations[a.id].length - machineAllocations[b.id].length);
                             for (const m of machinesForSvc) {
                                 const isMbusy = machineAllocations[m.id].some(busy => actionStart < busy.end && totalEnd > busy.start);
                                 if (!isMbusy) {
@@ -689,7 +717,12 @@ app.post("/api/schedule", async (req, res) => {
 
 app.use(express.static(path.join(process.cwd(), "public")));
 app.use((req, res) => {
-    res.sendFile(path.join(process.cwd(), "public", "index.html"));
+    if (req.path.startsWith("/api/")) return res.status(404).json({ error: "Not found" });
+    if (!req.cookies.tenant_id) {
+        res.sendFile(path.join(process.cwd(), "public", "landing.html"));
+    } else {
+        res.sendFile(path.join(process.cwd(), "public", "index.html"));
+    }
 });
 
 export default app;
