@@ -359,11 +359,8 @@ app.post("/api/schedule", async (req, res) => {
                 staffTimeline[app.staff_id].push({ start, end: actionEnd, type: 'action' });
             }
         });
-        const baseTime = startTime ? new Date(startTime).getTime() : new Date().getTime();
-        // Convert baseTime to its midnight
-        const baseDate = new Date(baseTime);
-        baseDate.setHours(0, 0, 0, 0);
-        const midnightTime = baseDate.getTime();
+        // Calculate midnight in Vietnam time (UTC+7)
+        const midnightTime = new Date(`${scheduleDate}T00:00:00+07:00`).getTime();
         const MIN_GAP = 1 * 60 * 1000; // 1 minute gap between services for same staff
         const parseTimeStr = (t) => {
             const parts = t.split(':');
@@ -461,8 +458,8 @@ app.post("/api/schedule", async (req, res) => {
                 let attemptTime = patientLastEndTime;
                 while (!foundSlot && attemptTime < midnightTime + 24 * 60 * 60 * 1000 && loopCount < MAX_LOOP) {
                     loopCount++;
-                    const attemptDate = new Date(attemptTime);
-                    const attemptMins = attemptDate.getHours() * 60 + attemptDate.getMinutes();
+                    const vnDate = new Date(attemptTime + 7 * 60 * 60 * 1000);
+                    const attemptMins = vnDate.getUTCHours() * 60 + vnDate.getUTCMinutes();
                     // Ép thời gian bắt đầu tối thiểu theo Stagger khi chuyển ca (Session)
                     if (attemptMins < mStartMins + staggerMins) {
                         attemptTime = midnightTime + (mStartMins + staggerMins) * 60 * 1000;
@@ -492,8 +489,8 @@ app.post("/api/schedule", async (req, res) => {
                                     const leaveEndParts = leave.end_time.split(':');
                                     const leaveEndMins = parseInt(leaveEndParts[0]) * 60 + parseInt(leaveEndParts[1]);
                                     // Tính thời gian thao tác DVKT
-                                    const attemptDate2 = new Date(attemptTime);
-                                    const dvktStartMins = attemptDate2.getHours() * 60 + attemptDate2.getMinutes();
+                                    const vnDate2 = new Date(attemptTime + 7 * 60 * 60 * 1000);
+                                    const dvktStartMins = vnDate2.getUTCHours() * 60 + vnDate2.getUTCMinutes();
                                     const dvktEndMins = dvktStartMins + service.non_overlap_time;
                                     // Check overlap: nếu thời gian DVKT chồng lên thời gian nghỉ → loại
                                     if (dvktStartMins < leaveEndMins && dvktEndMins > leaveStartMins) {
@@ -526,8 +523,8 @@ app.post("/api/schedule", async (req, res) => {
                         const totalEnd = actionStart + service.total_time * 60 * 1000;
                         const bedEnd = actionStart + service.bed_occupancy_time * 60 * 1000;
 
-                        const attemptEndDate = new Date(totalEnd);
-                        const attemptEndMins = attemptEndDate.getHours() * 60 + attemptEndDate.getMinutes();
+                        const attemptEndDate = new Date(totalEnd + 7 * 60 * 60 * 1000);
+                        const attemptEndMins = attemptEndDate.getUTCHours() * 60 + attemptEndDate.getUTCMinutes();
                         const fitsMorning = attemptMins >= mStartMins && attemptEndMins <= mEndMins;
                         const fitsLunchOt = enableLunchOt && attemptMins >= mStartMins && attemptEndMins <= lOtEndMins;
                         const fitsAfternoon = attemptMins >= aStartMins && attemptEndMins <= aEndMins;
