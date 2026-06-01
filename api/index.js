@@ -17,19 +17,32 @@ app.use(express.json());
 app.use(cookieParser());
 
 app.get("/api/settings", async (req, res) => {
-    const { data } = await supabase.from("settings").select("*");
+    const tenantId = req.cookies.tenant_id;
+    let query = supabase.from("settings").select("*");
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data } = await query;
     res.json((data || []).reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {}));
 });
 
 app.put("/api/settings", async (req, res) => {
-    const entries = Object.entries(req.body).map(([key, value]) => ({ key, value }));
+    const tenantId = req.cookies.tenant_id;
+    const updates = req.body;
+    const entries = Object.keys(updates).map(key => ({ 
+        key, 
+        value: updates[key],
+        tenant_id: tenantId || null
+    }));
     const { error } = await supabase.from("settings").upsert(entries);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ message: "Settings updated" });
 });
 
 app.get("/api/staff", async (req, res) => {
-    const { data: staff } = await supabase.from("staff").select("*");
+    const tenantId = req.cookies.tenant_id;
+    let staffQuery = supabase.from("staff").select("*");
+    if (tenantId) staffQuery = staffQuery.eq("tenant_id", tenantId);
+    const { data: staff } = await staffQuery;
+    
     const { data: staffServices } = await supabase.from("staff_services").select("*");
     
     const mappedStaff = (staff || []).map(s => {
@@ -40,8 +53,11 @@ app.get("/api/staff", async (req, res) => {
 });
 
 app.post("/api/staff", async (req, res) => {
+    const tenantId = req.cookies.tenant_id;
     const { name, role, allowed_services } = req.body;
-    const { data: info, error } = await supabase.from("staff").insert({ name, role }).select().single();
+    const { data: info, error } = await supabase.from("staff").insert({ 
+        name, role, tenant_id: tenantId || null 
+    }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     
     if (allowed_services && allowed_services.length) {
@@ -52,9 +68,12 @@ app.post("/api/staff", async (req, res) => {
 });
 
 app.post("/api/staff/bulk", async (req, res) => {
+    const tenantId = req.cookies.tenant_id;
     const { staffs } = req.body;
     for (const s of staffs) {
-        const { data: info } = await supabase.from("staff").insert({ name: s.name, role: s.role }).select().single();
+        const { data: info } = await supabase.from("staff").insert({ 
+            name: s.name, role: s.role, tenant_id: tenantId || null 
+        }).select().single();
         if (s.allowed_services && s.allowed_services.length && info) {
             const svcs = s.allowed_services.map(svc => ({ staff_id: info.id, service_id: svc }));
             await supabase.from("staff_services").insert(svcs);
@@ -138,8 +157,10 @@ app.delete("/api/services/:id", async (req, res) => {
 });
 
 app.get("/api/staff-leaves", async (req, res) => {
+    const tenantId = req.cookies.tenant_id;
     const { date, staff_id } = req.query;
     let query = supabase.from("staff_leaves").select("*, staff:staff_id(name)");
+    if (tenantId) query = query.eq("tenant_id", tenantId);
     if (date) query = query.eq("leave_date", date);
     if (staff_id) query = query.eq("staff_id", staff_id);
     
@@ -149,9 +170,11 @@ app.get("/api/staff-leaves", async (req, res) => {
 });
 
 app.post("/api/staff-leaves", async (req, res) => {
+    const tenantId = req.cookies.tenant_id;
     const { staff_id, leave_date, leave_type, start_time, end_time, reason } = req.body;
     const { data, error } = await supabase.from("staff_leaves").insert({
-        staff_id, leave_date, leave_type, start_time: start_time || null, end_time: end_time || null, reason: reason || null
+        staff_id, leave_date, leave_type, start_time: start_time || null, end_time: end_time || null, reason: reason || null,
+        tenant_id: tenantId || null
     }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ id: data.id, message: "Đã tạo nghỉ phép" });
@@ -173,14 +196,18 @@ app.delete("/api/staff-leaves/:id", async (req, res) => {
 });
 
 app.get("/api/machines", async (req, res) => {
-    const { data } = await supabase.from("machines").select("*");
+    const tenantId = req.cookies.tenant_id;
+    let query = supabase.from("machines").select("*");
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data } = await query;
     res.json(data || []);
 });
 
 app.post("/api/machines", async (req, res) => {
+    const tenantId = req.cookies.tenant_id;
     const { name, service_id, capacity } = req.body;
     const { data, error } = await supabase.from("machines").insert({
-        name, service_id: service_id || null, capacity: capacity || 1
+        name, service_id: service_id || null, capacity: capacity || 1, tenant_id: tenantId || null
     }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ id: data.id, message: "Machine created" });
@@ -202,7 +229,10 @@ app.delete("/api/machines/:id", async (req, res) => {
 });
 
 app.get("/api/appointments", async (req, res) => {
-    const { data } = await supabase.from("appointments").select("*, services(name), staff(name), machines(name)").order("start_time", { ascending: true });
+    const tenantId = req.cookies.tenant_id;
+    let query = supabase.from("appointments").select("*, services(name), staff(name), machines(name)");
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    const { data } = await query.order("start_time", { ascending: true });
     const mapped = (data || []).map(a => ({
         ...a,
         service_name: a.services?.name,
@@ -213,7 +243,10 @@ app.get("/api/appointments", async (req, res) => {
 });
 
 app.delete("/api/appointments", async (req, res) => {
-    await supabase.from("appointments").delete().neq("id", 0);
+    const tenantId = req.cookies.tenant_id;
+    let query = supabase.from("appointments").delete().neq("id", 0);
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    await query;
     res.json({ message: "All appointments cleared" });
 });
 
@@ -229,7 +262,10 @@ app.delete("/api/appointments/:id", async (req, res) => {
 
 app.delete("/api/appointments/patient/:name", async (req, res) => {
     const { name } = req.params;
-    await supabase.from("appointments").delete().eq("patient_name", name);
+    const tenantId = req.cookies.tenant_id;
+    let query = supabase.from("appointments").delete().eq("patient_name", name);
+    if (tenantId) query = query.eq("tenant_id", tenantId);
+    await query;
     res.json({ message: "Appointments for patient deleted" });
 });
 
@@ -248,16 +284,29 @@ app.post("/api/schedule", async (req, res) => {
     
     const tenantId = req.cookies.tenant_id;
     let servicesQuery = supabase.from("services").select("*");
-    if (tenantId) servicesQuery = servicesQuery.eq("tenant_id", tenantId);
+    let staffQuery = supabase.from("staff").select("*");
+    let settingsQuery = supabase.from("settings").select("*");
+    let machinesQuery = supabase.from("machines").select("*");
+    let leavesQuery = supabase.from("staff_leaves").select("*").eq("leave_date", scheduleDate);
+    let appsQuery = supabase.from("appointments").select("*");
+
+    if (tenantId) {
+        servicesQuery = servicesQuery.eq("tenant_id", tenantId);
+        staffQuery = staffQuery.eq("tenant_id", tenantId);
+        settingsQuery = settingsQuery.eq("tenant_id", tenantId);
+        machinesQuery = machinesQuery.eq("tenant_id", tenantId);
+        leavesQuery = leavesQuery.eq("tenant_id", tenantId);
+        appsQuery = appsQuery.eq("tenant_id", tenantId);
+    }
 
     const [servicesRes, staffRes, staffServicesRes, settingsRes, machinesRes, staffLeavesRes, existingAppsRes] = await Promise.all([
         servicesQuery,
-        supabase.from("staff").select("*"),
+        staffQuery,
         supabase.from("staff_services").select("*"),
-        supabase.from("settings").select("*"),
-        supabase.from("machines").select("*"),
-        supabase.from("staff_leaves").select("*").eq("leave_date", scheduleDate),
-        supabase.from("appointments").select("*")
+        settingsQuery,
+        machinesQuery,
+        leavesQuery,
+        appsQuery
     ]);
 
     const services = servicesRes.data || [];
