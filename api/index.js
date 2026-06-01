@@ -417,6 +417,8 @@ app.post("/api/schedule", async (req, res) => {
         const lOtEndMins = parseTimeStr(settings.lunch_ot_end || '12:30');
         const enableEveningOt = settings.enable_evening_ot === 'true';
         const eOtEndMins = parseTimeStr(settings.evening_ot_end || '19:00');
+        const lOtStartMins = mEndMins;   // Lunch OT bắt đầu ngay khi hết buổi sáng
+        const eOtStartMins = aEndMins;   // Evening OT bắt đầu ngay khi hết buổi chiều
         // --- Service priority order for scheduling ---
         const SERVICE_PRIORITY = ['xoa bóp', 'thủy châm', 'điện châm', 'hào châm', 'điện/hào châm', 'hồng ngoại', 'giác hơi', 'chườm'];
         const getSvcPriority = (svcName) => {
@@ -508,6 +510,14 @@ app.post("/api/schedule", async (req, res) => {
                 let attemptTime = patientLastEndTime;
                 let currentEnableLunchOt = (pass >= 2) ? enableLunchOt : false;
                 let currentEnableEveningOt = (pass === 3) ? enableEveningOt : false;
+                
+                // Pre-build staff → appointments lookup (chỉ cần tính 1 lần mỗi pass)
+                const appsByStaff = {};
+                for (const app of scheduledAppointments) {
+                    if (!appsByStaff[app.staff_id]) appsByStaff[app.staff_id] = [];
+                    appsByStaff[app.staff_id].push(app);
+                }
+                
                 while (!foundSlot && attemptTime < midnightTime + 24 * 60 * 60 * 1000 && loopCount < MAX_LOOP) {
                     loopCount++;
                     const attemptMins = Math.floor((attemptTime - midnightTime) / 60000);
@@ -718,15 +728,6 @@ app.post("/api/schedule", async (req, res) => {
                     if (hasPatientEndConflict) {
                         attemptTime += 60000;
                         continue;
-                    }
-
-                    let foundSlot = false;
-                    let finalSlotData = null;
-
-                    const appsByStaff = {};
-                    for (const app of scheduledAppointments) {
-                        if (!appsByStaff[app.staff_id]) appsByStaff[app.staff_id] = [];
-                        appsByStaff[app.staff_id].push(app);
                     }
 
                     for (const s of eligibleStaff) {
