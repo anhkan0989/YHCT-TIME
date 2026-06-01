@@ -98928,9 +98928,9 @@ Vui lòng kiểm tra lại cấu hình Dịch vụ (có NV nào nhận thao tác
         Je = Ze + Ae * 60 * 1e3;
       (ge.forEach(([qe, it], Ge) => {
         const We = new Date(it),
-          lt = We.getHours() * 60 + We.getMinutes() < Ae ? ut : Je,
-          ct = lt + (Ge * 2 + 1) * 6e4,
-          Tt = lt + (Ge * 2 + 2) * 6e4;
+          lt = We.getTime(),
+          ct = lt - 2 * 6e4,
+          Tt = lt - 1 * 6e4;
         et.set(qe, { taoPhieu: ct, yLenh: Tt });
       }),
         ne.forEach((qe) => {
