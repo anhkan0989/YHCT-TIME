@@ -249,10 +249,6 @@ app.post("/api/schedule", async (req, res) => {
     const allMachines = machinesRes.data || [];
     const staffLeaves = staffLeavesRes.data || [];
     const existingApps = existingAppsRes.data || [];
-const { patients, startTime } = req.body;
-        
-        
-        
         
         const settings = settingsRows.reduce((acc, row) => ({ ...acc, [row.key]: row.value }), {});
         const scheduledAppointments = [];
