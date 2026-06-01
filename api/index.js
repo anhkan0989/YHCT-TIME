@@ -260,8 +260,6 @@ app.post("/api/schedule", async (req, res) => {
         
         allMachines.forEach(m => machineAllocations[m.id] = []);
         staff.forEach(s => staffTimeline[s.id] = []);
-        // === Load nghỉ phép nhân sự cho ngày scheduling ===
-        const scheduleDate = startTime ? new Date(startTime).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
         
         const staffLeavesMap = {};
         staffLeaves.forEach(leave => {
