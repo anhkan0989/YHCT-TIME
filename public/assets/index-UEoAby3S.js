@@ -98928,9 +98928,21 @@ Vui lòng kiểm tra lại cấu hình Dịch vụ (có NV nào nhận thao tác
         Je = Ze + Ae * 60 * 1e3;
       (ge.forEach(([qe, it], Ge) => {
         const We = new Date(it),
-          lt = We.getTime(),
-          ct = lt - 2 * 6e4,
-          Tt = lt - 1 * 6e4;
+          We_mins = We.getHours() * 60 + We.getMinutes();
+        let diff_c = -2, diff_t = -1;
+        if (We_mins === Se) {
+          diff_c = 0; diff_t = 1;
+        } else if (We_mins === Ae) {
+          diff_c = 0; diff_t = 1;
+        } else if (We_mins > _e && We_mins < Ae) {
+          diff_c = _e - We_mins - 2;
+          diff_t = _e - We_mins - 1;
+        } else if (We_mins > je) {
+          diff_c = je - We_mins - 2;
+          diff_t = je - We_mins - 1;
+        }
+        const ct = We.getTime() + diff_c * 6e4,
+              Tt = We.getTime() + diff_t * 6e4;
         et.set(qe, { taoPhieu: ct, yLenh: Tt });
       }),
         ne.forEach((qe) => {
