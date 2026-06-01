@@ -481,7 +481,7 @@ app.post("/api/schedule", async (req, res) => {
                     if (sessionAppsForPatient.length === 0) {
                         let isTooClose = false;
                         for (let usedTime of globalFirstServiceTimes) {
-                            if (Math.abs(attemptTime - usedTime) < 3 * 60 * 1000) {
+                            if (Math.abs(attemptTime - usedTime) < 4 * 60 * 1000) {
                                 isTooClose = true;
                                 break;
                             }
