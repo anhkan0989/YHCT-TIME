@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import cors from "cors";
 import path from "path";
 import { createClient } from "@supabase/supabase-js";
@@ -814,20 +814,33 @@ app.post("/api/schedule", async (req, res) => {
                     status: 'scheduled'
                 });
             } else {
-                unassignedPatients.push({ ...p, service: service?.name, reason: 'Háº¿t sá»©c chá»©a / káº¹t lá»‹ch' });
+                unassignedPatients.push({ ...p, service: service?.name, reason: 'Het suc chua / ket lich' });
             }
         }); // end sortedPatients.forEach
 
         const elapsed = Date.now() - startMs;
         console.log(`[SCHEDULE] Xong trong ${elapsed}ms. OK: ${scheduledAppointments.length}, Fail: ${unassignedPatients.length}`);
 
-        // KHÃ”NG LÆ¯U DB - chá»‰ tráº£ káº¿t quáº£ Ä‘á»ƒ frontend hiá»ƒn thá»‹
-        // Frontend sáº½ gá»i API save riÃªng náº¿u user xÃ¡c nháº­n
+        // Luu vao DB de frontend hien thi danh sach
+        if (scheduledAppointments.length > 0) {
+            const tenantId = req.cookies.tenant_id;
+            const toInsert = scheduledAppointments.map(app => ({
+                patient_name: app.patient_name,
+                service_id: app.service_id,
+                staff_id: app.staff_id,
+                machine_id: app.machine_id,
+                start_time: app.start_time,
+                status: app.status,
+                tenant_id: tenantId || null
+            }));
+            await supabase.from("appointments").insert(toInsert);
+        }
+
         res.json({ scheduled: scheduledAppointments, unassigned: unassignedPatients });
 
         } catch (err) {
-            console.error('[SCHEDULE] Lá»–I:', err.message, err.stack);
-            res.status(500).json({ error: 'Lá»—i xáº¿p lá»‹ch: ' + err.message });
+            console.error('[SCHEDULE] ERROR:', err.message, err.stack);
+            res.status(500).json({ error: 'Loi xep lich: ' + err.message });
         }
 });
 
