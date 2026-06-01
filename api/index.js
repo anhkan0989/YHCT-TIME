@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 
@@ -684,6 +685,11 @@ app.post("/api/schedule", async (req, res) => {
     }
     
     res.json({ scheduled: scheduledAppointments, unassigned: unassignedPatients });
+});
+
+app.use(express.static(path.join(process.cwd(), "public")));
+app.get("*", (req, res) => {
+    res.sendFile(path.join(process.cwd(), "public", "index.html"));
 });
 
 export default app;
