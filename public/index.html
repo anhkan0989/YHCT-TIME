@@ -13,19 +13,21 @@
     <script defer src="/assets/module-staff-leave.js?v=1.6"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-CgyAsR17.css">
     <style>
-      /* Fix cho các màn hình/popup bị dài quá lấp mất nút Lưu */
+      /* Thu nhỏ toàn bộ các form nhập liệu dài để vừa màn hình */
       div[role="dialog"] {
-        max-height: 90vh !important;
+        zoom: 0.8 !important;
+        max-height: 100vh !important;
         overflow-y: auto !important;
+        padding-bottom: 50px !important;
       }
-      div[role="dialog"] > div {
-        transform: scale(0.95);
-        transform-origin: top center;
+      @media (max-height: 800px) {
+        div[role="dialog"] {
+          zoom: 0.7 !important;
+        }
       }
+      /* Đảm bảo nút Lưu không bị dính vào đáy */
       form {
-        max-height: 75vh;
-        overflow-y: auto;
-        padding-right: 10px;
+        padding-bottom: 20px;
       }
     </style>
   </head>
