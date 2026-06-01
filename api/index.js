@@ -535,7 +535,7 @@ app.post("/api/schedule", async (req, res) => {
 
             // Stagger: BN thá»© i báº¯t Ä‘áº§u muá»™n hÆ¡n (i*2+2) phÃºt
             const patientIndex = seenKeys.indexOf(pKey);
-            const staggerMins = patientIndex * 2;
+            const staggerMins = (patientIndex * 2) + 2;
             let patientLastEndTime = midnightTime + (mStartMins + staggerMins) * 60000;
 
             if (sessionAppsForPatient.length > 0) {
@@ -584,21 +584,21 @@ app.post("/api/schedule", async (req, res) => {
                     // ÄÃ£ vÆ°á»£t giá» lÃ m viá»‡c â†’ dá»«ng pass nÃ y
                     if (attemptMins >= dayEnd) break;
 
-                    // Fast-forward qua khoáº£ng thá»i gian khÃ´ng há»£p lá»‡
+                    // Fast-forward qua khoáº£ng thá» i gian khÃ´ng há»£p lá»‡
                     if (attemptMins < mStartMins + staggerMins) {
                         attemptTime = midnightTime + (mStartMins + staggerMins) * 60000;
                         continue;
                     }
                     if (attemptMins >= mEndMins && attemptMins < aStartMins) {
                         if (useLunchOt && attemptMins < lOtEndMins) {
-                            // Trong giá» trÆ°a OT â†’ cho phÃ©p tiáº¿p tá»¥c
+                            // Trong giá»  trÆ°a OT â†’ cho phÃ©p tiáº¿p tá»¥c
                         } else {
-                            attemptTime = midnightTime + aStartMins * 60000;
+                            attemptTime = midnightTime + (aStartMins + 2) * 60000;
                             continue;
                         }
                     }
                     if (attemptMins >= aEndMins && attemptMins < eOtEndMins && useEveningOt) {
-                        // Trong giá» tá»‘i OT â†’ cho phÃ©p tiáº¿p tá»¥c
+                        // Trong giá»  tá»‘i OT â†’ cho phÃ©p tiáº¿p tá»¥c
                     } else if (attemptMins >= aEndMins) {
                         break;
                     }
